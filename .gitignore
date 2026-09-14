@@ -1,0 +1,28 @@
+# Environment files (never commit real secrets)
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Eval run reports (keep the ones you want to track release-over-release, ignore the rest)
+backend/evals/reports/*.json
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/

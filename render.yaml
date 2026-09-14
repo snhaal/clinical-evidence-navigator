@@ -1,0 +1,39 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: connect this repo in the Render dashboard and it will detect this file,
+# or run `render blueprint launch` with the Render CLI.
+#
+# All secret values (marked sync: false) must be set manually in the Render
+# dashboard after the first deploy — never commit real values for these.
+
+services:
+  - type: web
+    name: clinical-evidence-navigator-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: LLM_PROVIDER_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: claude-sonnet-4-6
+      - key: CLINICALTRIALS_API_BASE
+        value: https://clinicaltrials.gov/api/v2
+      - key: MAX_REQUESTS_PER_IP_PER_HOUR
+        value: "20"
+      - key: MAX_PATIENT_PROFILE_CHARS
+        value: "4000"
+      - key: MAX_TRIALS_PER_QUERY
+        value: "10"
+      - key: APP_URL
+        sync: false  # set to your deployed Vercel frontend URL, e.g. https://your-app.vercel.app
+      - key: ENVIRONMENT
+        value: production
+      - key: REQUEST_TIMEOUT_SECONDS
+        value: "12"

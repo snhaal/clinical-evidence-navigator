@@ -1,0 +1,69 @@
+{
+  "cases": [
+    {
+      "gold_case_id": "case_001_esophageal_scc_stage3",
+      "patient_profile": "64-year-old female, Stage III esophageal squamous cell carcinoma, completed neoadjuvant chemoradiation, no distant metastasis.",
+      "expected_trial_nct_ids": [
+        "NCT03734952"
+      ],
+      "criteria": [
+        {
+          "nct_id": "NCT03734952",
+          "criterion_type": "inclusion",
+          "raw_text": "Age is between 18 years and 65 years,",
+          "expected_verdict": "match",
+          "rationale": "Patient is 64 years old, which is within the 18 to 65 window."
+        },
+        {
+          "nct_id": "NCT03734952",
+          "criterion_type": "inclusion",
+          "raw_text": "Male or non pregnant female",
+          "expected_verdict": "match",
+          "rationale": "Patient is female and non-pregnant."
+        },
+        {
+          "nct_id": "NCT03734952",
+          "criterion_type": "inclusion",
+          "raw_text": "(AJCC/UICC 8th Edition)",
+          "expected_verdict": "match",
+          "rationale": "Patient has Stage III disease."
+        },
+        {
+          "nct_id": "NCT03734952",
+          "criterion_type": "inclusion",
+          "raw_text": "Patients must not have received any prior anticancer therapy Histologically-confirmed squamous cell carcinoma of the esophagus;",
+          "expected_verdict": "no_match",
+          "rationale": "Patient already completed neoadjuvant chemoradiation."
+        },
+        {
+          "nct_id": "NCT03734952",
+          "criterion_type": "inclusion",
+          "raw_text": "Eastern Cooperative Oncology Group (ECOG) performance status 0-1 or Karnofsky performance status (KPS) of 70 or more;",
+          "expected_verdict": "unclear",
+          "rationale": "ECOG status was not provided in the summary profile."
+        },
+        {
+          "nct_id": "NCT03734952",
+          "criterion_type": "inclusion",
+          "raw_text": "The patient has provided written informed consent and is able to understand and comply with the study.",
+          "expected_verdict": "unclear",
+          "rationale": "Consent status is not mentioned in the patient profile."
+        },
+        {
+          "nct_id": "NCT03734952",
+          "criterion_type": "exclusion",
+          "raw_text": "Patients with non-squamous cell carcinoma histology;",
+          "expected_verdict": "no_match",
+          "rationale": "Patient has squamous cell carcinoma histology."
+        },
+        {
+          "nct_id": "NCT03734952",
+          "criterion_type": "exclusion",
+          "raw_text": "Patients with advanced inoperable or metastatic esophageal cancer;",
+          "expected_verdict": "no_match",
+          "rationale": "Patient profile explicitly states no distant metastasis."
+        }
+      ]
+    }
+  ]
+}

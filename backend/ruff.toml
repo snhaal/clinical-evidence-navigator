@@ -1,0 +1,6 @@
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+ignore = ["E501"]  # line length handled by editor wrapping, not a hard rule here
+
+[lint.per-file-ignores]
+"tests/*" = ["S101"]

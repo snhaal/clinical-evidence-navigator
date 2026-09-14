@@ -1,0 +1,79 @@
+"""
+FastAPI entrypoint.
+
+This is deliberately a thin shell in Module 2: it wires up the app, CORS,
+and a health check against the DB. The actual /match endpoint (invoking the
+Plan -> Act -> Ground -> Verify -> Synthesize loop) is added in Module 6
+once each stage exists.
+"""
+
+import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.routes import router as match_router
+from app.config import get_settings
+from app.db import dispose_engine, healthcheck
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    settings = get_settings()
+    logger.info("Starting Clinical Evidence Navigator API (env=%s)", settings.environment)
+    yield
+    await dispose_engine()
+    logger.info("Shut down cleanly.")
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+
+    app = FastAPI(
+        title="Clinical Evidence Navigator API",
+        description=(
+            "Agentic RAG system matching patient profiles to clinical trials "
+            "with cited, criterion-level reasoning. Not a medical device."
+        ),
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.app_url],
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/health")
+    async def health() -> dict:
+        db_ok = await healthcheck()
+        return {
+            "status": "ok" if db_ok else "degraded",
+            "database": "connected" if db_ok else "unreachable",
+        }
+
+    @app.get("/")
+    async def root() -> dict:
+        return {
+            "service": "clinical-evidence-navigator",
+            "disclaimer": (
+                "Portfolio engineering project. Not a medical device. "
+                "Not a substitute for clinical judgment."
+            ),
+        }
+
+    # Pipeline routes.
+    app.include_router(match_router)
+
+    return app
+
+
+app = create_app()

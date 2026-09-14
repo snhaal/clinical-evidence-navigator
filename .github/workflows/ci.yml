@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (lint + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt ruff
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        # DATABASE_URL / LLM_PROVIDER_API_KEY are dummy values — the unit
+        # suite never touches a real DB or LLM provider (see tests/*.py:
+        # every external call is faked or dependency-injected).
+        env:
+          DATABASE_URL: "postgresql+asyncpg://u:p@localhost:5432/db"
+          LLM_PROVIDER_API_KEY: "ci-placeholder-key"
+        run: pytest -v
+
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: "http://localhost:8000"
+        run: npm run build
+
+  # The gold-set eval harness (backend/evals/run_eval.py) is intentionally
+  # NOT run here: it calls the live ClinicalTrials.gov API and a real LLM
+  # provider, which costs money and needs secrets. Run it manually or wire
+  # it into a separate, manually-triggered workflow if you want it gated
+  # on merges to main — see the README's "Evaluation" section.

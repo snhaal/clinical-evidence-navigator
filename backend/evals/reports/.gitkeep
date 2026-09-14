@@ -1,0 +1,1 @@
+Eval run reports (JSON) are written here by evals/run_eval.py. Not meant to be committed long-term — add to .gitignore if this becomes a real repo, keeping only the reports you want to track release-over-release.
