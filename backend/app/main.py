@@ -44,11 +44,16 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Normalize app_url and allow preview/local origins
+    app_origin = str(settings.app_url).rstrip("/")
+    allowed_origins = [app_origin, "http://localhost:3000", "http://127.0.0.1:3000"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.app_url],
+        allow_origins=allowed_origins,
+        allow_origin_regex=r"https://clinical-evidence-navigator.*\.vercel\.app",
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["*"],
         allow_headers=["*"],
     )
 
