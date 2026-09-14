@@ -89,7 +89,19 @@ def _unwrap_array_field(raw_text: str, key: str) -> str:
         return json.dumps(parsed[key])
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise LLMProviderError(f"Groq response did not match the expected wrapped-array shape: {exc}") from exc
-
+    
+def _sanitize_gemini_schema(schema: Any) -> Any:
+    """Recursively removes OpenAPI / Pydantic fields rejected by Gemini's schema parser."""
+    if isinstance(schema, dict):
+        forbidden = {"additionalProperties", "additional_properties", "title", "$defs"}
+        return {
+            k: _sanitize_gemini_schema(v)
+            for k, v in schema.items()
+            if k not in forbidden
+        }
+    elif isinstance(schema, list):
+        return [_sanitize_gemini_schema(item) for item in schema]
+    return schema
 
 class LLMAdapter:
     """
@@ -423,7 +435,7 @@ class LLMAdapter:
         }
         if json_schema is not None:
             config_kwargs["response_mime_type"] = "application/json"
-            config_kwargs["response_schema"] = json_schema
+            config_kwargs["response_schema"] = _sanitize_gemini_schema(json_schema)
 
         try:
             response = await self._client.aio.models.generate_content(
