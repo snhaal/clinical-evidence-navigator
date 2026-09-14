@@ -69,7 +69,7 @@ def _parse_plan_response(raw_text: str) -> PlanResult:
     cleaned = _strip_json_fences(raw_text)
     data = json.loads(cleaned)  # raises json.JSONDecodeError on failure — caught by caller
 
-    if "clarifying_question" in data and data["clarifying_question"]:
+    if data.get("clarifying_question"):
         return PlanResult(clarifying_question=data["clarifying_question"], raw_model_output=raw_text)
 
     structured_query = StructuredQuery(**data)  # raises pydantic.ValidationError on failure

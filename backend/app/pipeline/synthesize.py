@@ -40,9 +40,7 @@ def summarize_trial(trial: NormalizedTrial, verdicts: list[CriterionVerdict]) ->
         # No criteria were ever evaluated (e.g. Ground stage found none) —
         # a data gap to surface as unclear, never a default "match".
         overall_verdict = "unclear"
-    elif hard_exclusion_hit:
-        overall_verdict = "no_match"
-    elif inclusion_no_match:
+    elif hard_exclusion_hit or inclusion_no_match:
         overall_verdict = "no_match"
     elif unclear_count > 0:
         overall_verdict = "unclear"

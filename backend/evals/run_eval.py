@@ -91,7 +91,7 @@ async def evaluate_case(
                 retrieval_hit = any(nct_id in retrieved_ids for nct_id in case.expected_trial_nct_ids)
             else:
                 warnings.append(f"{case.gold_case_id}: Plan stage asked for clarification; skipped retrieval check.")
-        except Exception as exc:  # noqa: BLE001 — a retrieval failure shouldn't abort the whole case
+        except Exception as exc:
             warnings.append(f"{case.gold_case_id}: retrieval-recall check failed: {exc}")
 
     # --- Per-trial Ground + Verify, matched against gold criteria ----------
@@ -158,7 +158,7 @@ async def evaluate_case(
 
 
 async def run(skip_retrieval: bool, persist: bool) -> dict:
-    with open(GOLD_CASES_PATH) as f:
+    with open(GOLD_CASES_PATH) as f:  # noqa: ASYNC230
         gold_case_set = GoldCaseSet(**json.load(f))
 
     llm = TrackingLLMAdapter()
