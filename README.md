@@ -9,6 +9,8 @@ verdict wherever information is missing.
 > architecture. It does not provide medical advice and must never be used for real clinical
 > decisions. See [Safety & scope](#safety--scope).
 
+**Live demo:** [ADD YOUR VERCEL URL HERE] · **API:** [ADD YOUR RENDER URL HERE]
+
 ## How it works
 
 ```
@@ -20,8 +22,19 @@ Browser → FastAPI /match → Plan → Act → Ground → Verify → Synthesize
 | **Plan** | Converts free-text patient profile into a structured, schema-validated query (LLM call). | Ambiguous input → asks one clarifying question, never guesses. |
 | **Act** | Calls the ClinicalTrials.gov API v2 with the structured query. | API timeout/error → visible error state, never a silent empty result. |
 | **Ground** | Splits each trial's eligibility text into atomic, numbered, citable criteria. No LLM call — deterministic, unit-tested. | Bad split → caught by unit tests before it ever reaches the model. |
-| **Verify** | One constrained LLM call per criterion: match / no_match / unclear + rationale + citation. | Fabricated citation → downgraded to `unclear` in code, never displayed as trusted. |
+| **Verify** | One constrained, schema-validated LLM call **per trial**, batching every criterion in that trial: match / no_match / unclear + rationale + citation each. | Fabricated citation → downgraded to `unclear` in code, never displayed as trusted. A criterion the model omits or gets malformed is repaired individually (single-criterion fallback) rather than invalidating the whole trial. |
 | **Synthesize** | Ranks trials, surfaces hard exclusions, assembles the cited response. Pure aggregation, no LLM call. | A matched exclusion criterion always overrides an otherwise high match score. |
+
+**Revised from the original plan:** Verify was originally one LLM call per criterion, for
+independence and cacheability. On a free-tier provider with an RPM ceiling as low as 5
+requests/minute, that meant a single 20-criterion trial alone could exceed the entire per-minute
+budget, and a typical 8-trial search (130+ criteria) became impossible. Verify now batches all of
+one trial's criteria into a single call (`verify_all_criteria` in `verify.py`), cutting a typical
+search to roughly one call per trial while keeping every original guardrail: each criterion still
+carries its own citation, every citation is still validated as an exact substring of *that*
+criterion's text (never a batch-wide approximation), and any criterion the model omits or
+mis-shapes is repaired individually via the original single-criterion path rather than
+invalidating the whole trial's batch.
 
 The core trust guarantee: **every verdict cites the exact source sentence it's based on, and that
 citation is checked as a real substring of the criterion text before it's ever trusted** — see
@@ -61,8 +74,17 @@ and a solo build benefits from one importable package rather than two.
 | Backend | FastAPI (Python 3.11) |
 | Trial data | ClinicalTrials.gov API v2 (public, no key) |
 | Database | Postgres + pgvector (Supabase free tier) |
-| LLM | One provider behind a swappable adapter (Anthropic by default), usage-capped |
+| LLM | One provider behind a swappable adapter — **Anthropic**, **Gemini**, or **Groq** (`.env.example` defaults to Groq; see below) |
 | Hosting | Vercel (frontend) + Render (backend) + Supabase (DB) — all free tier |
+
+**Provider note:** `app/adapters/llm.py` supports all three providers behind one interface
+(`LLMAdapter.complete()`). Groq is the default in `.env.example` because its free tier (30 RPM) is
+far more workable than Gemini's (observed as low as ~5 RPM) for a public demo, and it uses the
+standard `openai` SDK against an OpenAI-compatible endpoint rather than a newer, more
+version-sensitive SDK. The default Groq model, `openai/gpt-oss-120b`, is specifically chosen
+because it supports Groq's strict schema-enforced JSON output, which the batched Verify stage
+relies on for reliability (see below). Anthropic remains supported and is the simplest path if
+you don't care about free-tier RPM limits.
 
 No message queue, no Docker/Kubernetes, no second vector database, no multi-agent framework with
 hidden control flow — every hop in the request path is explainable from memory.
@@ -83,7 +105,7 @@ psql "$DATABASE_URL" -f db/migrations/0001_init.sql
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env   # fill in DATABASE_URL and LLM_PROVIDER_API_KEY
+cp .env.example .env   # fill in DATABASE_URL and LLM_PROVIDER_API_KEY (Groq key by default)
 uvicorn app.main:app --reload
 ```
 
@@ -108,10 +130,13 @@ cd backend
 pytest -v
 ```
 
-62 unit tests cover every pipeline stage, the rate limiter, and the eval-scoring math — all fully
-offline (faked LLM/API calls, no real credentials needed). Ground-stage tests in particular exist
-to catch a bad criterion split *before* it ever reaches the model, per the architecture's isolation
-principle.
+83 unit tests cover every pipeline stage, both rate limiters (the per-IP HTTP limiter in
+`app/rate_limit.py` and the process-wide LLM-call-pacing limiter in
+`app/adapters/rate_limiter.py`), the Groq adapter's schema-wrapping/fallback behavior, and the
+eval-scoring math — all fully offline (faked LLM/API calls, no real credentials needed; dummy
+`DATABASE_URL`/`LLM_PROVIDER_API_KEY` values are enough to run the suite). Ground-stage tests in
+particular exist to catch a bad criterion split *before* it ever reaches the model, per the
+architecture's isolation principle.
 
 ```bash
 cd frontend
@@ -132,12 +157,13 @@ important number — minimized above all), **citation validity**, **retrieval re
 abstention proxy (see caveat below). Prints a summary and writes a timestamped JSON report to
 `backend/evals/reports/`.
 
-**Honest gap:** `backend/evals/gold_cases.json` ships with 4 starter cases (11 labeled criteria) —
-2 fully real-format, 2 templated with `REPLACE WITH...` placeholders. The project plan calls for
-30–50 hand-labeled criteria, verified by a human against real, live ClinicalTrials.gov listings —
-that verification step is deliberately not something this codebase does for you. Growing the gold
-set is the single highest-leverage hour to spend before calling this "evaluated" rather than
-"demoed."
+**Honest gap:** `backend/evals/gold_cases.json` currently ships with 1 fully real, hand-labeled
+case (`case_001_esophageal_scc_stage3`, 8 labeled criteria against a real NCT listing — 6
+inclusion, 2 exclusion — with a mix of `match`, `no_match`, and `unclear` expected verdicts). The
+project plan calls for 30–50 hand-labeled criteria across multiple trials, verified by a human
+against real, live ClinicalTrials.gov listings. Growing the gold set — more cases, more trials,
+more criterion-verdict variety — is the single highest-leverage hour to spend before calling this
+"evaluated" rather than "demoed."
 
 Abstention *precision* (is "unclear" used only when information is genuinely missing?) also can't
 be fully automated from labels alone — `run_eval.py` reports a proxy (does the model's "unclear"
@@ -147,9 +173,13 @@ agree with the gold label's "unclear"?) and flags it explicitly as needing manua
 
 - **Frontend:** connect the repo to Vercel, set the root directory to `frontend/`, add
   `NEXT_PUBLIC_API_BASE_URL` pointing at the deployed backend.
+  Live demo: **https://clinical-evidence-navigator.vercel.app/**
 - **Backend:** `render.yaml` is a ready-to-use Blueprint — connect the repo in the Render
   dashboard, it auto-detects the file. Fill in `DATABASE_URL`, `LLM_PROVIDER_API_KEY`, and `APP_URL`
-  (your Vercel URL, for CORS) in the dashboard after first deploy.
+  (your Vercel URL, for CORS) in the dashboard after first deploy. Note the blueprint defaults
+  `LLM_PROVIDER` to `anthropic`; override it in the dashboard if you want Groq instead (see
+  [Known limitations](#known-limitations)).
+  Live API: **https://clinical-evidence-backend-s8vv.onrender.com/**
 - **Database:** Supabase free tier; run the migration once against the connection string.
 
 Cold-start latency on Render's free tier is a known limitation — warm the backend with a health
@@ -161,11 +191,23 @@ check before a live demo.
   unbulleted paragraph criteria falls back to treating the whole block as one inclusion criterion
   (safe — never misparses polarity — but low-value for per-criterion reasoning). Worth revisiting
   with an LLM-assisted splitter if the gold set shows this is common.
-- **Trials are verified sequentially** within one `/match` request (criteria *within* a trial run
-  concurrently, bounded by a semaphore). For 5–10 trials this should stay within the ~12s target,
-  but hasn't been load-tested against that number in production.
-- **Rate limiting is in-memory, single-instance.** Fine for a solo free-tier demo; move to
-  Postgres/Redis-backed counting before running more than one backend worker.
+- **Trials are verified sequentially** within one `/match` request (one batched LLM call per
+  trial). For 5–10 trials this should stay within the ~12s target, but hasn't been load-tested
+  against that number in production.
+- **Rate limiting is in-memory, single-instance**, for both limiters (`app/rate_limit.py` per-IP
+  HTTP limiter and `app/adapters/rate_limiter.py` per-process LLM-call pacer). Fine for a solo
+  free-tier demo; move to Postgres/Redis-backed counting before running more than one backend
+  worker.
+- **Groq's strict JSON-schema mode is model-specific.** It's confirmed on `openai/gpt-oss-120b`
+  (the `.env.example` default) but not on every Groq model — e.g. `llama-3.3-70b-versatile` lacks
+  it. The adapter degrades gracefully to prompt-only JSON on a 400 from the provider, but that
+  fallback is less reliable on large batched Verify calls, so switching models is not a drop-in
+  change.
+- **`render.yaml` still defaults `LLM_PROVIDER` to `anthropic`**, while local dev
+  (`backend/.env.example`) now defaults to `groq`. Both are fully supported by the adapter, but if
+  you want your Render deployment to match local dev, override `LLM_PROVIDER`,
+  `LLM_PROVIDER_API_KEY`, and `LLM_MODEL` in the Render dashboard rather than assuming the
+  blueprint's default.
 - **Frontend dependency audit** flags Next.js 14.x advisories (`npm audit`); pinned to the latest
   14.2.x patch since the plan specifies Next 14 and a jump to Next 16 is a breaking-change
   upgrade out of scope here.
@@ -186,11 +228,12 @@ check before a live demo.
 
 ## Sign-off checklist (from the project plan)
 
-- [x] A user can paste a profile and receive a ranked, cited shortlist (target: ~12s)
+- [x] A user can paste a profile and receive a ranked, cited shortlist (target: ~12s) —
+      `POST /match` implements the full Plan → Act → Ground → Verify → Synthesize loop
 - [x] Every verdict cites the exact source sentence, validated against retrieved text before display
 - [x] The system abstains ("unclear") rather than guesses when information is missing
 - [x] A gold evaluation set + automated scoring script exist (started; needs expansion — see above)
-- [ ] Deployed on free-tier infrastructure with a working public demo link — deployment configs are
-      in place (`render.yaml`, Vercel-ready frontend); an actual live deploy is the next step
+- [x] Deployed on free-tier infrastructure with a working public demo link — see
+      [Deployment](#deployment) above
 - [x] Disclaimer visible on every screen
 - [x] Architecture and every design trade-off documented above
