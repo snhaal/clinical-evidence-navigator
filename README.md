@@ -24,16 +24,31 @@ Matching cancer patients to clinical trials is traditionally a manual, labor-int
 
 The system decouples **retrieval query planning** from **deep criterion-level verification**, guaranteeing high recall during discovery and strict factual accuracy during evaluation.
 ```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 340}}}%%
 flowchart TD
-    A["📄 Unstructured Clinical Note<br/><i>EHR text: staging, pathology, prior therapy</i>"]
+    A["`**📄 Unstructured Clinical Note**
+    Dense EHR text — pathology staging ypT2N1M0,
+    prior resection, systemic therapies, ECOG PS 1`"]
 
-    B["🧠 Stage 1: Planner Agent<br/><i>Extracts & normalizes to MeSH query</i>"]
+    B["`**🧠 Stage 1 — Planner Agent**
+    • Free-text extraction to StructuredQuery schema (Pydantic v2)
+    • MeSH entity normalization
+    • Staging & surgical sanitization`"]
 
-    C["🔍 ClinicalTrials.gov REST API v2<br/><i>Recruiting trials + 3-tier relaxation fallback</i>"]
+    C["`**🔍 ClinicalTrials.gov REST API v2**
+    • Recruiting-only retrieval (top 3 candidates)
+    • 3-tier automated query relaxation fallback`"]
 
-    D["✅ Stage 2: Verifier Agent<br/><i>Criterion-level audit + equivalence axioms</i>"]
+    D["`**✅ Stage 2 — Verifier Agent**
+    • Deterministic criteria grounding
+    • Zero-shot audit — up to 20 criteria/study
+    • Clinical domain equivalence axioms
+    • Temporal grounding + fail-fast short-circuit`"]
 
-    E["💻 Next.js Frontend Dashboard<br/><i>Ranked matches with citations</i>"]
+    E["`**💻 Next.js Frontend Dashboard**
+    • Ranked shortlist (Eligible / Unclear / Ineligible)
+    • Interactive criteria breakdown with citations
+    • Transparent clinical abstention`"]
 
     A --> B
     B -->|"query.cond, status=RECRUITING"| C
@@ -46,7 +61,6 @@ flowchart TD
     style D fill:#4c1d3d,stroke:#ec4899,color:#fff
     style E fill:#3f2d1e,stroke:#f59e0b,color:#fff
 ```
-
 ### Pipeline Execution Stages
 
 1. **Plan (Stage 1)**: Converts unstructured clinical narratives into a validated `StructuredQuery` schema. Normalizes conditions to standard MeSH entities while explicitly discarding staging notations (TNM, AJCC), lab thresholds, and surgical details to prevent over-constraining the search.
