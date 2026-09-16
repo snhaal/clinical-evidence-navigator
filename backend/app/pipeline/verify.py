@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
@@ -72,6 +73,7 @@ Rules:
    - A diagnosed cancer histology (e.g. 'esophageal squamous cell carcinoma') satisfies requirements for 'histologically or pathologically confirmed' disease ("match") with evidence_quote citing the diagnosed cancer.
    - A documented cancer stage (e.g. Stage III) satisfies stage range criteria (e.g. Stage II-III) and 'locally advanced' ("match").
    - Documented absence of distant spread (e.g. 'no distant metastasis', 'M0') satisfies distant metastatic exclusions and non-metastatic requirements ("match").
+   - For all time-based criteria (e.g. 'completed within 6 months'), use today's date stated in the prompt as the reference point.
 7. Citation Rule: "cited_text" must be copied VERBATIM from the criterion text you were given — do not paraphrase, summarize, or modify comparison operators (<, <=, >=). If verdict is "unclear" due to missing information, cite the full criterion text instead.
 """
 
@@ -109,6 +111,7 @@ Rules:
    - A diagnosed cancer histology (e.g. 'esophageal squamous cell carcinoma') satisfies requirements for 'histologically or pathologically confirmed' disease ("match") with evidence_quote citing the diagnosed cancer.
    - A documented cancer stage (e.g. Stage III) satisfies stage range criteria (e.g. Stage II-III) and 'locally advanced' ("match").
    - Documented absence of distant spread (e.g. 'no distant metastasis', 'M0') satisfies distant metastatic exclusions and non-metastatic requirements ("match").
+   - For all time-based criteria (e.g. 'completed within 6 months'), use today's date stated in the prompt as the reference point.
 7. Citation Rule: "cited_text" must be copied VERBATIM from THAT criterion's own text — never from a different criterion, never paraphrased, and preserve comparison operators (<, <=, >=) exactly as written in the criterion text. If verdict is "unclear" due to missing information, cite that criterion's full text instead.
 8. criterion_type and criterion_index in your response must exactly match one of the criteria listed below.
 """
@@ -285,7 +288,9 @@ def _validate_citation(
 def _build_single_user_prompt(
     patient_profile_text: str, criterion: TrialCriterion
 ) -> str:
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return (
+        f"Today's date is {today_str}. Use this as the reference point for all time-based criteria (e.g. 'completed within 6 months').\n\n"
         f"Patient profile:\n{patient_profile_text}\n\n"
         f"Criterion type: {criterion.criterion_type}\n"
         f"Criterion index: {criterion.criterion_index}\n"
@@ -377,7 +382,12 @@ async def verify_criterion(
 def _build_batch_user_prompt(
     patient_profile_text: str, criteria: list[TrialCriterion]
 ) -> str:
-    lines = [f"Patient profile:\n{patient_profile_text}\n", "Criteria:"]
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_anchor = (
+        f"Today's date is {today_str}. Use this as the reference point for all time-based criteria "
+        "(e.g. 'completed within 6 months')."
+    )
+    lines = [date_anchor, f"Patient profile:\n{patient_profile_text}\n", "Criteria:"]
     for c in criteria:
         lines.append(f"[{c.criterion_type} #{c.criterion_index}] {c.raw_text}")
     return "\n".join(lines)

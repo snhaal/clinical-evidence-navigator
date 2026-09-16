@@ -99,7 +99,14 @@ class ClinicalTrialsClient:
         Raises ClinicalTrialsAPIError on failure — callers must show a visible
         error state, never a silent empty result (NFR: Reliability).
         """
-        params = {**query_params, "pageSize": self._max_results, "format": "json"}
+        params = {
+            "filter.overallStatus": "RECRUITING",
+            **query_params,
+            "pageSize": self._max_results,
+            "format": "json",
+        }
+        # Ensure filter.overallStatus is always RECRUITING
+        params["filter.overallStatus"] = "RECRUITING"
         studies = await self._fetch_studies(params)
 
         # Automatic query relaxation fallback:
