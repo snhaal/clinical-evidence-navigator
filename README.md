@@ -23,21 +23,20 @@ Matching cancer patients to clinical trials is traditionally a manual, labor-int
 ## Two-Stage Agentic RAG Architecture
 
 The system decouples **retrieval query planning** from **deep criterion-level verification**, guaranteeing high recall during discovery and strict factual accuracy during evaluation.
-
 ```mermaid
 flowchart TD
-    A["📄 Unstructured Clinical Note<br/><i>Dense EHR text: pathology staging ypT2N1M0,<br/>prior resection, systemic therapies, ECOG PS 1</i>"]
+    A["📄 Unstructured Clinical Note<br/><i>EHR text: staging, pathology, prior therapy</i>"]
 
-    B["🧠 Stage 1: Planner Agent<br/>• Free-text extraction to StructuredQuery schema (Pydantic v2)<br/>• MeSH entity normalization<br/>• Staging & surgical sanitization"]
+    B["🧠 Stage 1: Planner Agent<br/><i>Extracts & normalizes to MeSH query</i>"]
 
-    C["🔍 ClinicalTrials.gov REST API v2<br/>• filter.overallStatus = RECRUITING<br/>• 3-Tier Automated Query Relaxation Fallback"]
+    C["🔍 ClinicalTrials.gov REST API v2<br/><i>Recruiting trials + 3-tier relaxation fallback</i>"]
 
-    D["✅ Stage 2: Verifier Agent<br/>• Deterministic grounding into atomic criteria<br/>• Deep zero-shot audit (up to 20 criteria/study)<br/>• Clinical Domain Equivalence Axioms<br/>• Temporal grounding (UTC date)<br/>• Fail-fast short-circuit"]
+    D["✅ Stage 2: Verifier Agent<br/><i>Criterion-level audit + equivalence axioms</i>"]
 
-    E["💻 Next.js Frontend Dashboard<br/>• Ranked trial shortlist (Eligible / Unclear / Ineligible)<br/>• Interactive criteria breakdown<br/>• Transparent clinical abstention"]
+    E["💻 Next.js Frontend Dashboard<br/><i>Ranked matches with citations</i>"]
 
     A --> B
-    B -->|"query.cond, filter.overallStatus=RECRUITING"| C
+    B -->|"query.cond, status=RECRUITING"| C
     C --> D
     D --> E
 
