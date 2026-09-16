@@ -159,24 +159,41 @@ class LLMAdapter:
         elif self._provider == "gemini":
             from google import genai
 
-            self._client = genai.Client(api_key=settings.llm_provider_api_key)
+            api_key = settings.gemini_api_key or settings.llm_provider_api_key
+            self._client = genai.Client(api_key=api_key)
         elif self._provider == "groq":
-            # Groq exposes an OpenAI-compatible endpoint, so the standard
-            # `openai` SDK works unmodified — just point base_url at Groq
-            # and use a Groq model name. This is deliberately the standard
-            # OpenAI client, not a Groq-specific SDK: it's the more mature,
-            # widely-used code path, which matters after hitting real
-            # version-sensitivity issues with google-genai.
             from openai import AsyncOpenAI
 
+            api_key = settings.groq_api_key or settings.llm_provider_api_key
             self._client = AsyncOpenAI(
-                api_key=settings.llm_provider_api_key,
+                api_key=api_key,
                 base_url="https://api.groq.com/openai/v1",
             )
         else:
             raise NotImplementedError(
                 f"LLM provider '{self._provider}' is not wired up. Supported: 'anthropic', 'gemini', 'groq'."
             )
+
+        # Optional Groq fallback client for transient 429/503 under Gemini
+        self._groq_client = None
+        self._groq_model = "openai/gpt-oss-120b"
+        groq_key = settings.groq_api_key or (
+            settings.llm_provider_api_key if settings.llm_provider == "groq" else None
+        )
+        if not groq_key:
+            import os
+
+            groq_key = os.environ.get("GROQ_API_KEY")
+        if groq_key and self._provider != "groq":
+            try:
+                from openai import AsyncOpenAI
+
+                self._groq_client = AsyncOpenAI(
+                    api_key=groq_key,
+                    base_url="https://api.groq.com/openai/v1",
+                )
+            except Exception as e:
+                logger.warning("Could not initialize optional Groq fallback client: %s", e)
 
     async def complete(
         self,
@@ -234,13 +251,37 @@ class LLMAdapter:
                             json_schema,
                         )
                     else:
-                        return await self._complete_gemini(
-                            system_prompt,
-                            user_prompt,
-                            max_tokens,
-                            temperature,
-                            json_schema,
-                        )
+                        try:
+                            return await self._complete_gemini(
+                                system_prompt,
+                                user_prompt,
+                                max_tokens,
+                                temperature,
+                                json_schema,
+                            )
+                        except _RateLimitSignal as exc:
+                            if self._groq_client is not None:
+                                logger.warning(
+                                    "Gemini rate limited or unavailable (%s); attempting fallback to Groq (%s)...",
+                                    exc,
+                                    self._groq_model,
+                                )
+                                try:
+                                    return await self._complete_groq(
+                                        system_prompt,
+                                        user_prompt,
+                                        min(max_tokens, 2200),
+                                        temperature,
+                                        json_schema,
+                                        client=self._groq_client,
+                                        model=self._groq_model,
+                                    )
+                                except Exception as fallback_exc:
+                                    logger.warning(
+                                        "Groq fallback also failed: %s; proceeding with backoff retry on Gemini.",
+                                        fallback_exc,
+                                    )
+                            raise
             except _RateLimitSignal as exc:
                 last_error = exc
                 if attempt >= self._MAX_RATE_LIMIT_RETRIES:
@@ -313,6 +354,8 @@ class LLMAdapter:
         max_tokens: int,
         temperature: float,
         json_schema: dict[str, Any] | None,
+        client: Any = None,
+        model: str | None = None,
     ) -> CompletionResult:
         """
         Groq's OpenAI-compatible endpoint. Two things worth knowing if you
@@ -339,6 +382,9 @@ class LLMAdapter:
            regardless of provider.
         """
         from openai import APIError, APIStatusError, APITimeoutError, RateLimitError
+
+        groq_client = client or self._client
+        groq_model = model or self._model
 
         response_format: dict[str, Any] | None = None
         wrapped_array = json_schema is not None and json_schema.get("type") == "array"
@@ -377,8 +423,8 @@ class LLMAdapter:
         await asyncio.sleep(3.0)
 
         try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
+            response = await groq_client.chat.completions.create(
+                model=groq_model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -406,7 +452,11 @@ class LLMAdapter:
                     exc,
                 )
                 return await self._complete_groq_plain_json_fallback(
-                    messages, max_tokens, temperature
+                    messages,
+                    max_tokens,
+                    temperature,
+                    client=groq_client,
+                    model=groq_model,
                 )
             raise LLMProviderError(
                 f"Groq API error ({exc.status_code}): {exc}"
@@ -426,7 +476,6 @@ class LLMAdapter:
             match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
             text = match.group(1).strip() if match else text.strip()
 
-
         if not text:
             finish_reason = choice.finish_reason if choice else None
             raise LLMProviderError(
@@ -441,11 +490,16 @@ class LLMAdapter:
             text=text,
             input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-            model=self._model,
+            model=groq_model,
         )
 
     async def _complete_groq_plain_json_fallback(
-        self, messages: list[dict[str, str]], max_tokens: int, temperature: float
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int,
+        temperature: float,
+        client: Any = None,
+        model: str | None = None,
     ) -> CompletionResult:
         """
         Used only when strict json_schema mode is rejected outright by the
@@ -454,6 +508,9 @@ class LLMAdapter:
         and strips markdown fences.
         """
         from openai import APIError, APITimeoutError, RateLimitError
+
+        groq_client = client or self._client
+        groq_model = model or self._model
 
         # Rate pacing for Groq's rolling 8,000 TPM limit
         await asyncio.sleep(3.0)
@@ -478,8 +535,8 @@ class LLMAdapter:
             ) + "\n\nImportant: Return a JSON object containing a 'verdicts' key with the list: {\"verdicts\": [...]}. Must be valid JSON."
 
         try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
+            response = await groq_client.chat.completions.create(
+                model=groq_model,
                 messages=formatted_messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -507,8 +564,6 @@ class LLMAdapter:
             if is_array_prompt and text.startswith("{"):
                 text = _unwrap_array_field(text, key="verdicts")
 
-
-
         if not text:
             finish_reason = choice.finish_reason if choice else None
             raise LLMProviderError(
@@ -520,7 +575,7 @@ class LLMAdapter:
             text=text,
             input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-            model=self._model,
+            model=groq_model,
         )
 
     async def _complete_gemini(
@@ -538,18 +593,6 @@ class LLMAdapter:
             "system_instruction": system_prompt,
             "temperature": temperature,
             "max_output_tokens": max_tokens,
-            # Gemini 2.5 Flash "thinks" before answering by default, and
-            # those thinking tokens count against max_output_tokens — which
-            # silently truncates the actual JSON response before it's
-            # finished, especially with response_schema (a widely reported
-            # upstream issue: thoughts_token_count can exceed the requested
-            # budget even with thinking_budget=0). This task needs fast,
-            # deterministic extraction/verdicts, not step-by-step reasoning,
-            # so we explicitly ask for zero thinking budget. This is NOT
-            # 100% reliably honored by the API, which is why max_output_tokens
-            # is also given generous headroom below rather than relying on
-            # this alone.
-            "thinking_config": types.ThinkingConfig(thinking_budget=0),
         }
         if json_schema is not None:
             config_kwargs["response_mime_type"] = "application/json"
@@ -584,12 +627,15 @@ class LLMAdapter:
             raise LLMProviderError("Gemini provider timed out.") from exc
 
         text = getattr(response, "text", None)
+        if text:
+            match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
+            text = match.group(1).strip() if match else text.strip()
+
         if not text:
             finish_reason = _get_finish_reason(response)
             if finish_reason and "MAX_TOKENS" in str(finish_reason):
                 raise LLMProviderError(
-                    "Gemini response was truncated (hit max_output_tokens, likely due to internal "
-                    "'thinking' tokens eating the budget) before any usable text was produced. "
+                    "Gemini response was truncated (hit max_output_tokens) before any usable text was produced. "
                     "Consider raising max_tokens for this call."
                 )
             raise LLMProviderError(

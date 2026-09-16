@@ -69,7 +69,9 @@ Rules:
    - "unclear": the profile lacks enough information to judge this criterion (INSUFFICIENT_DATA).
 6. Clinical Reasoning:
    - For 'Male or non pregnant female', a post-menopausal woman (e.g. 60+ years old) or a male satisfies non-pregnant female / male ("match").
-   - A documented cancer stage (e.g. Stage III) satisfies stage range criteria (e.g. Stage II-III) unless explicitly contradictory.
+   - A diagnosed cancer histology (e.g. 'esophageal squamous cell carcinoma') satisfies requirements for 'histologically or pathologically confirmed' disease ("match") with evidence_quote citing the diagnosed cancer.
+   - A documented cancer stage (e.g. Stage III) satisfies stage range criteria (e.g. Stage II-III) and 'locally advanced' ("match").
+   - Documented absence of distant spread (e.g. 'no distant metastasis', 'M0') satisfies distant metastatic exclusions and non-metastatic requirements ("match").
 7. Citation Rule: "cited_text" must be copied VERBATIM from the criterion text you were given — do not paraphrase, summarize, or modify comparison operators (<, <=, >=). If verdict is "unclear" due to missing information, cite the full criterion text instead.
 """
 
@@ -104,16 +106,18 @@ Rules:
    - "unclear": the profile lacks enough information to judge that criterion (INSUFFICIENT_DATA).
 6. Clinical Reasoning:
    - For 'Male or non pregnant female', a post-menopausal woman (e.g. 60+ years old) or a male satisfies non-pregnant female / male ("match").
-   - A documented cancer stage (e.g. Stage III) satisfies stage range criteria (e.g. Stage II-III) unless explicitly contradictory.
+   - A diagnosed cancer histology (e.g. 'esophageal squamous cell carcinoma') satisfies requirements for 'histologically or pathologically confirmed' disease ("match") with evidence_quote citing the diagnosed cancer.
+   - A documented cancer stage (e.g. Stage III) satisfies stage range criteria (e.g. Stage II-III) and 'locally advanced' ("match").
+   - Documented absence of distant spread (e.g. 'no distant metastasis', 'M0') satisfies distant metastatic exclusions and non-metastatic requirements ("match").
 7. Citation Rule: "cited_text" must be copied VERBATIM from THAT criterion's own text — never from a different criterion, never paraphrased, and preserve comparison operators (<, <=, >=) exactly as written in the criterion text. If verdict is "unclear" due to missing information, cite that criterion's full text instead.
 8. criterion_type and criterion_index in your response must exactly match one of the criteria listed below.
 """
 
 
-CHUNK_SIZE = 5
-_BATCH_TOKENS_PER_CRITERION = 300  # 5 criteria * 300 = 1500 tokens; prevents "max completion tokens reached" under strict schema
+CHUNK_SIZE = 20
+_BATCH_TOKENS_PER_CRITERION = 200
 _BATCH_TOKENS_FLOOR = 600
-_BATCH_TOKENS_CEILING = 2200  # Stays safely under Groq's 8,000 TPM limit
+_BATCH_TOKENS_CEILING = 4000
 
 
 
@@ -521,17 +525,16 @@ async def verify_trial_criteria(
 ) -> list[CriterionVerdict]:
     """
     Judges eligibility criteria for ONE trial in sequential chunks of at most
-    CHUNK_SIZE (5) criteria per LLM call.
+    CHUNK_SIZE (20) criteria per LLM call.
 
-    Criteria list is capped at 5 criteria per study to prevent JSON truncation
-    and respect TPM limits. Fail-fast terminates further checks if any criterion
-    renders the patient ineligible.
+    Criteria list is capped at up to 20 criteria per study. Fail-fast terminates
+    further checks if any criterion renders the patient ineligible.
     """
     if not criteria:
         return []
 
-    # Cap criteria per study to at most 5
-    criteria = criteria[:5]
+    # Cap criteria per study to at most 20
+    criteria = criteria[:20]
 
     llm = llm or LLMAdapter()
     criteria_chunks = [

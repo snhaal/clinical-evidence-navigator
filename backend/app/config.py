@@ -27,13 +27,26 @@ class Settings(BaseSettings):
     )
 
     # --- LLM provider (adapter-based, swappable) ------------------------
-    llm_provider: str = Field(default="groq", description="anthropic | gemini | groq")
+    llm_provider: str = Field(default="gemini", description="anthropic | gemini | groq")
+    gemini_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GEMINI_API_KEY"),
+        description="Google Gemini API key",
+    )
+    groq_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GROQ_API_KEY"),
+        description="Groq API key for fallback",
+    )
     llm_provider_api_key: str = Field(
         ...,
-        validation_alias=AliasChoices("LLM_PROVIDER_API_KEY", "GROQ_API_KEY"),
+        validation_alias=AliasChoices(
+            "GEMINI_API_KEY", "LLM_PROVIDER_API_KEY", "GROQ_API_KEY"
+        ),
         description="Server-side only. Never exposed to the browser.",
     )
-    llm_model: str = Field(default="openai/gpt-oss-120b")
+    llm_model: str = Field(default="gemini-3.5-flash-lite")
+
     llm_max_requests_per_minute: int = Field(
         default=5,
         description=(

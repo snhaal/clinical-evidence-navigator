@@ -350,7 +350,7 @@ def test_batch_max_output_tokens_respects_floor():
 def test_batch_max_output_tokens_respects_ceiling():
     from app.pipeline.verify import _batch_max_output_tokens
 
-    assert _batch_max_output_tokens(1000, attempt=0) <= 2200
+    assert _batch_max_output_tokens(1000, attempt=0) <= 4000
 
 
 def test_batch_max_output_tokens_retry_gets_more_room_than_first_attempt():
@@ -362,9 +362,9 @@ def test_batch_max_output_tokens_retry_gets_more_room_than_first_attempt():
 
 
 @pytest.mark.asyncio
-async def test_criteria_capped_at_five_per_study():
-    """Criteria are capped at at most 5 before evaluating a study."""
-    criteria = [make_criterion(f"Criterion {i}", index=i) for i in range(12)]
+async def test_criteria_capped_at_twenty_per_study():
+    """Criteria are capped at at most 20 before evaluating a study."""
+    criteria = [make_criterion(f"Criterion {i}", index=i) for i in range(25)]
     batch_response = json.dumps(
         [
             {
@@ -374,7 +374,7 @@ async def test_criteria_capped_at_five_per_study():
                 "rationale": "ok",
                 "cited_text": f"Criterion {i}",
             }
-            for i in range(5)
+            for i in range(20)
         ]
     )
     llm = FakeLLM(responses=[batch_response])
@@ -382,8 +382,8 @@ async def test_criteria_capped_at_five_per_study():
     verdicts = await verify_all_criteria("some profile", criteria, llm=llm)
 
     assert len(llm.calls) == 1
-    assert len(verdicts) == 5
-    assert [v.criterion_index for v in verdicts] == [0, 1, 2, 3, 4]
+    assert len(verdicts) == 20
+    assert [v.criterion_index for v in verdicts] == list(range(20))
 
 
 @pytest.mark.asyncio
