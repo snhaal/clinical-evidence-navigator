@@ -18,14 +18,34 @@ class StructuredQuery(BaseModel):
     what was extracted from the free-text profile.
     """
 
-    condition: str = Field(..., min_length=1, description="Primary diagnosis/condition, e.g. 'esophageal squamous cell carcinoma'")
-    stage: str | None = Field(default=None, description="Disease stage, e.g. 'Stage III'")
-    prior_therapy: list[str] = Field(default_factory=list, description="Treatments already received, e.g. ['neoadjuvant chemoradiation']")
-    biomarkers: list[str] = Field(default_factory=list, description="Known biomarker status, e.g. ['HER2-positive']")
-    exclusions: list[str] = Field(default_factory=list, description="Patient-stated exclusions/comorbidities relevant to eligibility")
+    condition: str = Field(
+        ...,
+        min_length=1,
+        description="Primary diagnosis/condition, e.g. 'esophageal squamous cell carcinoma'",
+    )
+    stage: str | None = Field(
+        default=None, description="Disease stage, e.g. 'Stage III'"
+    )
+    prior_therapy: list[str] = Field(
+        default_factory=list,
+        description="Treatments already received, e.g. ['neoadjuvant chemoradiation']",
+    )
+    biomarkers: list[str] = Field(
+        default_factory=list,
+        description="Known biomarker status, e.g. ['HER2-positive']",
+    )
+    exclusions: list[str] = Field(
+        default_factory=list,
+        description="Patient-stated exclusions/comorbidities relevant to eligibility",
+    )
     age: int | None = Field(default=None, ge=0, le=120)
-    sex: str | None = Field(default=None, description="As stated in the profile; used only if a trial restricts by sex")
-    status_filter: str = Field(default="RECRUITING", description="ClinicalTrials.gov overallStatus filter")
+    sex: str | None = Field(
+        default=None,
+        description="As stated in the profile; used only if a trial restricts by sex",
+    )
+    status_filter: str = Field(
+        default="RECRUITING", description="ClinicalTrials.gov overallStatus filter"
+    )
 
     @field_validator("condition")
     @classmethod
@@ -45,14 +65,18 @@ class PlanResult(BaseModel):
 
     structured_query: StructuredQuery | None = None
     clarifying_question: str | None = None
-    raw_model_output: str = Field(exclude=True, default="")  # kept for logging/debugging, not returned to the client
+    raw_model_output: str = Field(
+        exclude=True, default=""
+    )  # kept for logging/debugging, not returned to the client
 
     @field_validator("clarifying_question")
     @classmethod
     def exactly_one_of_query_or_question(cls, v, info):
         query = info.data.get("structured_query")
         if (query is None) == (v is None):
-            raise ValueError("PlanResult must set exactly one of structured_query or clarifying_question")
+            raise ValueError(
+                "PlanResult must set exactly one of structured_query or clarifying_question"
+            )
         return v
 
     @property
@@ -73,7 +97,10 @@ class NormalizedTrial(BaseModel):
     status: str | None = None
     phase: list[str] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list)
-    eligibility_text: str = Field(default="", description="Raw eligibility criteria text, unmodified, for the Ground stage to split")
+    eligibility_text: str = Field(
+        default="",
+        description="Raw eligibility criteria text, unmodified, for the Ground stage to split",
+    )
 
 
 class TrialCriterion(BaseModel):

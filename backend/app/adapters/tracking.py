@@ -40,7 +40,11 @@ class TrackingLLMAdapter:
         result = await self.inner.complete(*args, **kwargs)
         elapsed_ms = (time.monotonic() - start) * 1000
         self.calls.append(
-            CallRecord(latency_ms=elapsed_ms, input_tokens=result.input_tokens, output_tokens=result.output_tokens)
+            CallRecord(
+                latency_ms=elapsed_ms,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+            )
         )
         return result
 

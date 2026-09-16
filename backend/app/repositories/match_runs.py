@@ -66,7 +66,11 @@ async def insert_criterion_verdicts(
         key = (verdict.criterion_type, verdict.criterion_index)
         criterion_id = criterion_id_by_key.get(key)
         if criterion_id is None:
-            logger.warning("No stored criterion_id found for %s %s; skipping verdict persistence.", verdict.nct_id, key)
+            logger.warning(
+                "No stored criterion_id found for %s %s; skipping verdict persistence.",
+                verdict.nct_id,
+                key,
+            )
             continue
 
         await conn.execute(

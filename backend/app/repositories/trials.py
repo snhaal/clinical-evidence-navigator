@@ -71,6 +71,8 @@ async def insert_trial_criteria(
                 "raw_text": criterion.raw_text,
             },
         )
-        criterion_ids[(criterion.criterion_type, criterion.criterion_index)] = result.scalar_one()
+        criterion_ids[(criterion.criterion_type, criterion.criterion_index)] = (
+            result.scalar_one()
+        )
 
     return criterion_ids

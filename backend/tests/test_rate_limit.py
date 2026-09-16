@@ -18,7 +18,9 @@ def test_rejects_requests_over_the_limit():
 
     assert limiter.check_and_record("1.2.3.4") is True
     assert limiter.check_and_record("1.2.3.4") is True
-    assert limiter.check_and_record("1.2.3.4") is False  # third request within the window is rejected
+    assert (
+        limiter.check_and_record("1.2.3.4") is False
+    )  # third request within the window is rejected
 
 
 def test_different_ips_have_independent_limits():

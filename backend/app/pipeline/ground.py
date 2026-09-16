@@ -68,7 +68,9 @@ def _split_into_items(block_text: str) -> list[str]:
     return [re.sub(r"\s+", " ", item).strip() for item in items if item.strip()]
 
 
-def decompose_eligibility_criteria(nct_id: str, eligibility_text: str) -> list[TrialCriterion]:
+def decompose_eligibility_criteria(
+    nct_id: str, eligibility_text: str
+) -> list[TrialCriterion]:
     """
     Main entry point for the Ground stage.
 
@@ -84,15 +86,19 @@ def decompose_eligibility_criteria(nct_id: str, eligibility_text: str) -> list[T
     inclusion_match = _INCLUSION_HEADER.search(text)
     exclusion_match = _EXCLUSION_HEADER.search(text)
 
-    if inclusion_match and exclusion_match and exclusion_match.start() > inclusion_match.end():
-        inclusion_block = text[inclusion_match.end():exclusion_match.start()]
-        exclusion_block = text[exclusion_match.end():]
+    if (
+        inclusion_match
+        and exclusion_match
+        and exclusion_match.start() > inclusion_match.end()
+    ):
+        inclusion_block = text[inclusion_match.end() : exclusion_match.start()]
+        exclusion_block = text[exclusion_match.end() :]
     elif exclusion_match:
         # Exclusion header present but no (or misplaced) inclusion header —
         # treat everything before it as inclusion, per the conservative
         # fallback described above.
-        inclusion_block = text[:exclusion_match.start()]
-        exclusion_block = text[exclusion_match.end():]
+        inclusion_block = text[: exclusion_match.start()]
+        exclusion_block = text[exclusion_match.end() :]
     else:
         logger.warning(
             "No 'Exclusion Criteria' header found for %s; treating entire "
@@ -106,12 +112,22 @@ def decompose_eligibility_criteria(nct_id: str, eligibility_text: str) -> list[T
 
     for index, item in enumerate(_split_into_items(inclusion_block)):
         criteria.append(
-            TrialCriterion(nct_id=nct_id, criterion_type="inclusion", criterion_index=index, raw_text=item)
+            TrialCriterion(
+                nct_id=nct_id,
+                criterion_type="inclusion",
+                criterion_index=index,
+                raw_text=item,
+            )
         )
 
     for index, item in enumerate(_split_into_items(exclusion_block)):
         criteria.append(
-            TrialCriterion(nct_id=nct_id, criterion_type="exclusion", criterion_index=index, raw_text=item)
+            TrialCriterion(
+                nct_id=nct_id,
+                criterion_type="exclusion",
+                criterion_index=index,
+                raw_text=item,
+            )
         )
 
     return criteria

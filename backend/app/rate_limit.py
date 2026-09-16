@@ -54,5 +54,7 @@ def get_rate_limiter() -> InMemoryRateLimiter:
         from app.config import get_settings
 
         settings = get_settings()
-        _limiter = InMemoryRateLimiter(max_requests=settings.max_requests_per_ip_per_hour, window_seconds=3600)
+        _limiter = InMemoryRateLimiter(
+            max_requests=settings.max_requests_per_ip_per_hour, window_seconds=3600
+        )
     return _limiter

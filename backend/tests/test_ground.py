@@ -36,8 +36,12 @@ def test_criterion_index_is_sequential_and_zero_based_per_type():
     text = "Inclusion Criteria:\n- A\n- B\n- C\n\nExclusion Criteria:\n- X"
     criteria = decompose_eligibility_criteria("NCT002", text)
 
-    inclusion_indexes = [c.criterion_index for c in criteria if c.criterion_type == "inclusion"]
-    exclusion_indexes = [c.criterion_index for c in criteria if c.criterion_type == "exclusion"]
+    inclusion_indexes = [
+        c.criterion_index for c in criteria if c.criterion_type == "inclusion"
+    ]
+    exclusion_indexes = [
+        c.criterion_index for c in criteria if c.criterion_type == "exclusion"
+    ]
 
     assert inclusion_indexes == [0, 1, 2]
     assert exclusion_indexes == [0]
@@ -55,7 +59,10 @@ def test_wrapped_continuation_lines_are_joined_not_split():
     inclusion = [c for c in criteria if c.criterion_type == "inclusion"]
 
     assert len(inclusion) == 2
-    assert inclusion[0].raw_text == "Patients with histologically or cytologically confirmed locally advanced or metastatic solid tumor"
+    assert (
+        inclusion[0].raw_text
+        == "Patients with histologically or cytologically confirmed locally advanced or metastatic solid tumor"
+    )
     assert inclusion[1].raw_text == "ECOG performance status 0 or 1"
 
 

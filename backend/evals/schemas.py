@@ -22,14 +22,18 @@ class GoldCriterion(BaseModel):
     criterion_type: str = Field(..., pattern="^(inclusion|exclusion)$")
     raw_text: str
     expected_verdict: str = Field(..., pattern="^(match|no_match|unclear)$")
-    notes: str | None = Field(default=None, description="Why you labeled it this way — useful when a run disagrees")
+    notes: str | None = Field(
+        default=None,
+        description="Why you labeled it this way — useful when a run disagrees",
+    )
 
 
 class GoldCase(BaseModel):
     gold_case_id: str
     patient_profile: str
     expected_trial_nct_ids: list[str] = Field(
-        ..., description="Trials retrieval SHOULD surface for this profile (for retrieval-recall scoring)"
+        ...,
+        description="Trials retrieval SHOULD surface for this profile (for retrieval-recall scoring)",
     )
     criteria: list[GoldCriterion] = Field(
         default_factory=list,

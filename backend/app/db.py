@@ -23,7 +23,7 @@ def get_engine() -> AsyncEngine:
         settings = get_settings()
         _engine = create_async_engine(
             settings.database_url,
-            pool_pre_ping=True,   # avoids stale-connection errors after Supabase idles the pool
+            pool_pre_ping=True,  # avoids stale-connection errors after Supabase idles the pool
             pool_size=5,
             max_overflow=5,
             echo=False,

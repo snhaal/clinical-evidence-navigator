@@ -27,7 +27,9 @@ async def insert_patient_profile(
         ),
         {
             "raw_text": raw_text,
-            "structured_query": json.dumps(structured_query) if structured_query is not None else None,
+            "structured_query": json.dumps(structured_query)
+            if structured_query is not None
+            else None,
             "clarifying_question": clarifying_question,
         },
     )

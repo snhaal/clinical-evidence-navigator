@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
-    logger.info("Starting Clinical Evidence Navigator API (env=%s)", settings.environment)
+    logger.info(
+        "Starting Clinical Evidence Navigator API (env=%s)", settings.environment
+    )
     yield
     await dispose_engine()
     logger.info("Shut down cleanly.")

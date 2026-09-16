@@ -70,14 +70,18 @@ async def test_wait_time_is_computed_correctly_against_a_fake_clock(monkeypatch)
     await limiter.acquire()  # consumes the only slot at t=1000.0
     await limiter.acquire()  # must wait until t=1060.0 (60s later)
 
-    assert sleep_calls, "expected the second acquire() to sleep while waiting for the window"
+    assert sleep_calls, (
+        "expected the second acquire() to sleep while waiting for the window"
+    )
     assert fake_now[0] >= 1060.0
 
 
 @pytest.mark.asyncio
 async def test_concurrent_callers_are_serialized_correctly():
     """Many coroutines calling acquire() at once must never all believe they got the same slot."""
-    limiter = AsyncRateLimiter(max_per_minute=100)  # generous, just checking no double-booking
+    limiter = AsyncRateLimiter(
+        max_per_minute=100
+    )  # generous, just checking no double-booking
     results = await asyncio.gather(*[limiter.acquire() for _ in range(20)])
     assert len(results) == 20
     assert len(limiter._call_timestamps) == 20

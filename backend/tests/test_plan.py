@@ -21,26 +21,36 @@ class FakeLLM:
         self._raise_error = raise_error
         self.calls: list[str] = []
 
-    async def complete(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024, temperature: float = 0.0):
+    async def complete(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
+    ):
         self.calls.append(user_prompt)
         if self._raise_error:
             raise LLMProviderError("simulated provider failure")
         text = self._responses[len(self.calls) - 1]
-        return CompletionResult(text=text, input_tokens=100, output_tokens=50, model="fake-model")
+        return CompletionResult(
+            text=text, input_tokens=100, output_tokens=50, model="fake-model"
+        )
 
 
 @pytest.mark.asyncio
 async def test_confident_extraction_returns_structured_query():
-    response = json.dumps({
-        "condition": "esophageal squamous cell carcinoma",
-        "stage": "Stage III",
-        "prior_therapy": ["neoadjuvant chemoradiation"],
-        "biomarkers": [],
-        "exclusions": ["distant metastasis"],
-        "age": 64,
-        "sex": "female",
-        "status_filter": "RECRUITING",
-    })
+    response = json.dumps(
+        {
+            "condition": "esophageal squamous cell carcinoma",
+            "stage": "Stage III",
+            "prior_therapy": ["neoadjuvant chemoradiation"],
+            "biomarkers": [],
+            "exclusions": ["distant metastasis"],
+            "age": 64,
+            "sex": "female",
+            "status_filter": "RECRUITING",
+        }
+    )
     llm = FakeLLM(responses=[response])
 
     result = await plan_patient_profile(
@@ -58,10 +68,14 @@ async def test_confident_extraction_returns_structured_query():
 
 @pytest.mark.asyncio
 async def test_model_requests_clarification_directly():
-    response = json.dumps({"clarifying_question": "What is the patient's primary diagnosis?"})
+    response = json.dumps(
+        {"clarifying_question": "What is the patient's primary diagnosis?"}
+    )
     llm = FakeLLM(responses=[response])
 
-    result = await plan_patient_profile("65-year-old patient, recently diagnosed, seeking options", llm=llm)
+    result = await plan_patient_profile(
+        "65-year-old patient, recently diagnosed, seeking options", llm=llm
+    )
 
     assert result.needs_clarification
     assert result.structured_query is None
@@ -80,16 +94,18 @@ async def test_malformed_json_retries_then_falls_back_to_clarification():
 
 @pytest.mark.asyncio
 async def test_second_attempt_succeeds_after_first_malformed_response():
-    good_response = json.dumps({
-        "condition": "non-small cell lung cancer",
-        "stage": None,
-        "prior_therapy": [],
-        "biomarkers": [],
-        "exclusions": [],
-        "age": None,
-        "sex": None,
-        "status_filter": "RECRUITING",
-    })
+    good_response = json.dumps(
+        {
+            "condition": "non-small cell lung cancer",
+            "stage": None,
+            "prior_therapy": [],
+            "biomarkers": [],
+            "exclusions": [],
+            "age": None,
+            "sex": None,
+            "status_filter": "RECRUITING",
+        }
+    )
     llm = FakeLLM(responses=["```json\nnot actually valid```", good_response])
 
     result = await plan_patient_profile("patient with lung cancer", llm=llm)
@@ -120,19 +136,27 @@ async def test_empty_profile_short_circuits_without_calling_llm():
 
 @pytest.mark.asyncio
 async def test_markdown_fenced_json_is_parsed():
-    response = "```json\n" + json.dumps({
-        "condition": "breast cancer",
-        "stage": "II",
-        "prior_therapy": [],
-        "biomarkers": ["HER2-positive"],
-        "exclusions": [],
-        "age": 50,
-        "sex": "female",
-        "status_filter": "RECRUITING",
-    }) + "\n```"
+    response = (
+        "```json\n"
+        + json.dumps(
+            {
+                "condition": "breast cancer",
+                "stage": "II",
+                "prior_therapy": [],
+                "biomarkers": ["HER2-positive"],
+                "exclusions": [],
+                "age": 50,
+                "sex": "female",
+                "status_filter": "RECRUITING",
+            }
+        )
+        + "\n```"
+    )
     llm = FakeLLM(responses=[response])
 
-    result = await plan_patient_profile("50yo female, Stage II HER2-positive breast cancer", llm=llm)
+    result = await plan_patient_profile(
+        "50yo female, Stage II HER2-positive breast cancer", llm=llm
+    )
 
     assert not result.needs_clarification
     assert result.structured_query.condition == "breast cancer"

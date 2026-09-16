@@ -15,7 +15,9 @@ from evals.scoring import (
 )
 
 
-def make_comparison(predicted: str, expected: str, cited_text: str = "x", raw_text: str = "x criterion") -> CriterionComparison:
+def make_comparison(
+    predicted: str, expected: str, cited_text: str = "x", raw_text: str = "x criterion"
+) -> CriterionComparison:
     return CriterionComparison(
         nct_id="NCT001",
         criterion_type="inclusion",
@@ -28,12 +30,18 @@ def make_comparison(predicted: str, expected: str, cited_text: str = "x", raw_te
 
 
 def test_agreement_rate_all_correct():
-    comparisons = [make_comparison("match", "match"), make_comparison("no_match", "no_match")]
+    comparisons = [
+        make_comparison("match", "match"),
+        make_comparison("no_match", "no_match"),
+    ]
     assert agreement_rate(comparisons) == 1.0
 
 
 def test_agreement_rate_partial():
-    comparisons = [make_comparison("match", "match"), make_comparison("match", "no_match")]
+    comparisons = [
+        make_comparison("match", "match"),
+        make_comparison("match", "no_match"),
+    ]
     assert agreement_rate(comparisons) == 0.5
 
 
@@ -43,21 +51,27 @@ def test_agreement_rate_empty_returns_none():
 
 def test_false_match_rate_counts_only_gold_no_match_criteria():
     comparisons = [
-        make_comparison("match", "no_match"),   # false match
+        make_comparison("match", "no_match"),  # false match
         make_comparison("no_match", "no_match"),  # correct
-        make_comparison("match", "match"),      # not counted — gold isn't no_match
+        make_comparison("match", "match"),  # not counted — gold isn't no_match
         make_comparison("unclear", "unclear"),  # not counted
     ]
     assert false_match_rate(comparisons) == 0.5  # 1 false match / 2 gold no_match cases
 
 
 def test_false_match_rate_none_when_no_gold_no_match_cases():
-    comparisons = [make_comparison("match", "match"), make_comparison("unclear", "unclear")]
+    comparisons = [
+        make_comparison("match", "match"),
+        make_comparison("unclear", "unclear"),
+    ]
     assert false_match_rate(comparisons) is None
 
 
 def test_false_match_rate_zero_when_no_false_matches():
-    comparisons = [make_comparison("no_match", "no_match"), make_comparison("unclear", "no_match")]
+    comparisons = [
+        make_comparison("no_match", "no_match"),
+        make_comparison("unclear", "no_match"),
+    ]
     assert false_match_rate(comparisons) == 0.0
 
 
@@ -72,7 +86,7 @@ def test_abstention_stats_computes_proxy_precision():
     comparisons = [
         make_comparison("unclear", "unclear"),  # correct abstention
         make_comparison("unclear", "unclear"),  # correct abstention
-        make_comparison("unclear", "match"),    # unnecessary abstention
+        make_comparison("unclear", "match"),  # unnecessary abstention
     ]
     stats = abstention_stats(comparisons)
     assert stats["predicted_unclear_count"] == 3
@@ -83,14 +97,24 @@ def test_abstention_stats_computes_proxy_precision():
 
 def test_citation_validity_all_valid_substrings():
     comparisons = [
-        make_comparison("match", "match", cited_text="Age 18+", raw_text="Age 18+ required for enrollment"),
+        make_comparison(
+            "match",
+            "match",
+            cited_text="Age 18+",
+            raw_text="Age 18+ required for enrollment",
+        ),
     ]
     assert citation_validity(comparisons) == 1.0
 
 
 def test_citation_validity_detects_invalid_citation():
     comparisons = [
-        make_comparison("match", "match", cited_text="totally fabricated quote", raw_text="Age 18+ required"),
+        make_comparison(
+            "match",
+            "match",
+            cited_text="totally fabricated quote",
+            raw_text="Age 18+ required",
+        ),
     ]
     assert citation_validity(comparisons) == 0.0
 

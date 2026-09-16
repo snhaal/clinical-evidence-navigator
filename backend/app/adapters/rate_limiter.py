@@ -73,5 +73,7 @@ def get_llm_rate_limiter() -> AsyncRateLimiter:
         from app.config import get_settings
 
         settings = get_settings()
-        _llm_rate_limiter = AsyncRateLimiter(max_per_minute=settings.llm_max_requests_per_minute)
+        _llm_rate_limiter = AsyncRateLimiter(
+            max_per_minute=settings.llm_max_requests_per_minute
+        )
     return _llm_rate_limiter

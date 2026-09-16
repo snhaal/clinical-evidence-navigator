@@ -64,7 +64,10 @@ class FakeGroqClient:
     async def _create(self, **kwargs):
         self.calls.append(kwargs)
         call_index = len(self.calls) - 1
-        if call_index < len(self._status_errors) and self._status_errors[call_index] is not None:
+        if (
+            call_index < len(self._status_errors)
+            and self._status_errors[call_index] is not None
+        ):
             raise self._status_errors[call_index]
         return self._responses[call_index]
 
@@ -77,19 +80,26 @@ def make_adapter_with_fake_client(fake_client) -> LLMAdapter:
     adapter._timeout = 12
     from app.adapters.rate_limiter import AsyncRateLimiter
 
-    adapter._rate_limiter = AsyncRateLimiter(max_per_minute=1000)  # generous, not under test here
+    adapter._rate_limiter = AsyncRateLimiter(
+        max_per_minute=1000
+    )  # generous, not under test here
     adapter._client = fake_client
     return adapter
 
 
 @pytest.mark.asyncio
 async def test_groq_array_schema_is_wrapped_in_request_and_unwrapped_in_response():
-    array_schema = {"type": "array", "items": {"type": "object", "properties": {"x": {"type": "string"}}}}
+    array_schema = {
+        "type": "array",
+        "items": {"type": "object", "properties": {"x": {"type": "string"}}},
+    }
     fake_response = FakeResponse(json.dumps({"verdicts": [{"x": "a"}, {"x": "b"}]}))
     client = FakeGroqClient(responses=[fake_response])
     adapter = make_adapter_with_fake_client(client)
 
-    result = await adapter.complete("system", "user", max_tokens=100, json_schema=array_schema)
+    result = await adapter.complete(
+        "system", "user", max_tokens=100, json_schema=array_schema
+    )
 
     # Request: the schema sent to the API must be object-rooted, wrapping the array.
     sent_schema = client.calls[0]["response_format"]["json_schema"]["schema"]
@@ -109,10 +119,14 @@ async def test_groq_object_schema_is_not_wrapped():
     client = FakeGroqClient(responses=[fake_response])
     adapter = make_adapter_with_fake_client(client)
 
-    result = await adapter.complete("system", "user", max_tokens=100, json_schema=object_schema)
+    result = await adapter.complete(
+        "system", "user", max_tokens=100, json_schema=object_schema
+    )
 
     sent_schema = client.calls[0]["response_format"]["json_schema"]["schema"]
-    assert sent_schema == object_schema  # passed through unchanged, no "verdicts" wrapper
+    assert (
+        sent_schema == object_schema
+    )  # passed through unchanged, no "verdicts" wrapper
     assert json.loads(result.text) == {"x": "hello"}
 
 
@@ -140,13 +154,25 @@ async def test_groq_falls_back_to_plain_json_when_strict_schema_rejected():
 
     array_schema = {"type": "array", "items": {"type": "object"}}
     first_call_error = FakeStatusError()
-    fallback_response = FakeResponse(json.dumps([{"verdict": "match"}]))  # plain array, no wrapping this time
-    client = FakeGroqClient(responses=[None, fallback_response], status_errors=[first_call_error, None])
+    fallback_response = FakeResponse(
+        json.dumps([{"verdict": "match"}])
+    )  # plain array, no wrapping this time
+    client = FakeGroqClient(
+        responses=[None, fallback_response], status_errors=[first_call_error, None]
+    )
     adapter = make_adapter_with_fake_client(client)
 
-    result = await adapter.complete("system", "user", max_tokens=100, json_schema=array_schema)
+    result = await adapter.complete(
+        "system", "user", max_tokens=100, json_schema=array_schema
+    )
 
     assert len(client.calls) == 2
-    assert client.calls[0]["response_format"] is not None  # first attempt: strict schema
-    assert "response_format" not in client.calls[1]  # fallback: no response_format at all
-    assert json.loads(result.text) == [{"verdict": "match"}]  # returned as-is, no unwrap attempted
+    assert (
+        client.calls[0]["response_format"] is not None
+    )  # first attempt: strict schema
+    assert (
+        "response_format" not in client.calls[1]
+    )  # fallback: no response_format at all
+    assert json.loads(result.text) == [
+        {"verdict": "match"}
+    ]  # returned as-is, no unwrap attempted

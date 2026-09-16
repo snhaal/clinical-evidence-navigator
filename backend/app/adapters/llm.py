@@ -19,7 +19,6 @@ Supported providers: "anthropic", "gemini", and "groq". Set LLM_PROVIDER in .env
 import asyncio
 import json
 import logging
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +28,7 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 # Limit simultaneous in-flight requests to Groq to prevent instant burst 429s
 _RATE_SEMAPHORE = asyncio.Semaphore(2)
+
 
 class LLMProviderError(Exception):
     """Raised when the provider call fails or returns an unusable response."""
@@ -89,8 +89,11 @@ def _unwrap_array_field(raw_text: str, key: str) -> str:
         parsed = json.loads(raw_text)
         return json.dumps(parsed[key])
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise LLMProviderError(f"Groq response did not match the expected wrapped-array shape: {exc}") from exc
-    
+        raise LLMProviderError(
+            f"Groq response did not match the expected wrapped-array shape: {exc}"
+        ) from exc
+
+
 def _sanitize_gemini_schema(schema: Any) -> Any:
     """Recursively removes OpenAPI / Pydantic fields rejected by Gemini's schema parser."""
     if isinstance(schema, dict):
@@ -103,6 +106,7 @@ def _sanitize_gemini_schema(schema: Any) -> Any:
     elif isinstance(schema, list):
         return [_sanitize_gemini_schema(item) for item in schema]
     return schema
+
 
 class LLMAdapter:
     """
@@ -136,7 +140,9 @@ class LLMAdapter:
         if self._provider == "anthropic":
             import anthropic
 
-            self._client = anthropic.AsyncAnthropic(api_key=settings.llm_provider_api_key)
+            self._client = anthropic.AsyncAnthropic(
+                api_key=settings.llm_provider_api_key
+            )
         elif self._provider == "gemini":
             from google import genai
 
@@ -193,14 +199,24 @@ class LLMAdapter:
                 async with _RATE_SEMAPHORE:
                     await asyncio.sleep(0.2)
                     if self._provider == "anthropic":
-                        return await self._complete_anthropic(system_prompt, user_prompt, max_tokens, temperature)
+                        return await self._complete_anthropic(
+                            system_prompt, user_prompt, max_tokens, temperature
+                        )
                     elif self._provider == "groq":
                         return await self._complete_groq(
-                            system_prompt, user_prompt, max_tokens, temperature, json_schema
+                            system_prompt,
+                            user_prompt,
+                            max_tokens,
+                            temperature,
+                            json_schema,
                         )
                     else:
                         return await self._complete_gemini(
-                            system_prompt, user_prompt, max_tokens, temperature, json_schema
+                            system_prompt,
+                            user_prompt,
+                            max_tokens,
+                            temperature,
+                            json_schema,
                         )
             except _RateLimitSignal as exc:
                 last_error = exc
@@ -307,7 +323,11 @@ class LLMAdapter:
             )
             response_format = {
                 "type": "json_schema",
-                "json_schema": {"name": "response", "strict": True, "schema": schema_for_api},
+                "json_schema": {
+                    "name": "response",
+                    "strict": True,
+                    "schema": schema_for_api,
+                },
             }
 
         messages = [
@@ -340,10 +360,15 @@ class LLMAdapter:
                 # for JSON, so this degrades gracefully rather than crashing.
                 logger.warning(
                     "Groq rejected strict json_schema (model may not support it); "
-                    "retrying this call with plain prompt-instructed JSON instead: %s", exc,
+                    "retrying this call with plain prompt-instructed JSON instead: %s",
+                    exc,
                 )
-                return await self._complete_groq_plain_json_fallback(messages, max_tokens, temperature)
-            raise LLMProviderError(f"Groq API error ({exc.status_code}): {exc}") from exc
+                return await self._complete_groq_plain_json_fallback(
+                    messages, max_tokens, temperature
+                )
+            raise LLMProviderError(
+                f"Groq API error ({exc.status_code}): {exc}"
+            ) from exc
         except APIError as exc:
             raise LLMProviderError(f"Groq API error: {exc}") from exc
 
@@ -351,7 +376,9 @@ class LLMAdapter:
         text = choice.message.content if choice and choice.message else None
         if not text:
             finish_reason = choice.finish_reason if choice else None
-            raise LLMProviderError(f"Groq provider returned no text content (finish_reason={finish_reason}).")
+            raise LLMProviderError(
+                f"Groq provider returned no text content (finish_reason={finish_reason})."
+            )
 
         if wrapped_array:
             text = _unwrap_array_field(text, key="verdicts")
@@ -399,7 +426,9 @@ class LLMAdapter:
         choice = response.choices[0] if response.choices else None
         text = choice.message.content if choice and choice.message else None
         if not text:
-            raise LLMProviderError("Groq provider returned no text content (plain JSON fallback).")
+            raise LLMProviderError(
+                "Groq provider returned no text content (plain JSON fallback)."
+            )
 
         usage = response.usage
         return CompletionResult(
@@ -450,14 +479,18 @@ class LLMAdapter:
         except ClientError as exc:
             if exc.code == 429:
                 raise _RateLimitSignal(f"{exc.status}: {exc.message}") from exc
-            raise LLMProviderError(f"Gemini client error ({exc.code} {exc.status}): {exc.message}") from exc
+            raise LLMProviderError(
+                f"Gemini client error ({exc.code} {exc.status}): {exc.message}"
+            ) from exc
         except ServerError as exc:
             # 5xx from Gemini is transient, same as a rate limit from the
             # caller's point of view — worth a backed-off retry, not a
             # straight failure.
             raise _RateLimitSignal(f"{exc.status}: {exc.message}") from exc
         except APIError as exc:
-            raise LLMProviderError(f"Gemini API error ({exc.code}): {exc.message}") from exc
+            raise LLMProviderError(
+                f"Gemini API error ({exc.code}): {exc.message}"
+            ) from exc
         except asyncio.TimeoutError as exc:
             raise LLMProviderError("Gemini provider timed out.") from exc
 
@@ -470,7 +503,9 @@ class LLMAdapter:
                     "'thinking' tokens eating the budget) before any usable text was produced. "
                     "Consider raising max_tokens for this call."
                 )
-            raise LLMProviderError(f"Gemini provider returned no text content (finish_reason={finish_reason}).")
+            raise LLMProviderError(
+                f"Gemini provider returned no text content (finish_reason={finish_reason})."
+            )
 
         usage = getattr(response, "usage_metadata", None)
         input_tokens = getattr(usage, "prompt_token_count", 0) or 0

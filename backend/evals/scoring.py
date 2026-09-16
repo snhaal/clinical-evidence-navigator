@@ -98,7 +98,9 @@ def latency_stats(latencies_ms: list[float]) -> dict:
     sorted_latencies = sorted(latencies_ms)
     return {
         "p50_ms": statistics.median(sorted_latencies),
-        "p95_ms": sorted_latencies[min(len(sorted_latencies) - 1, int(len(sorted_latencies) * 0.95))],
+        "p95_ms": sorted_latencies[
+            min(len(sorted_latencies) - 1, int(len(sorted_latencies) * 0.95))
+        ],
         "mean_ms": statistics.mean(sorted_latencies),
         "count": len(sorted_latencies),
     }

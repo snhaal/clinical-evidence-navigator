@@ -26,7 +26,9 @@ from app.pipeline.schemas import PlanResult, StructuredQuery
 
 logger = logging.getLogger(__name__)
 
-MAX_PROFILE_CHARS_FOR_PROMPT = 4000  # matches config.max_patient_profile_chars; enforced again defensively here
+MAX_PROFILE_CHARS_FOR_PROMPT = (
+    4000  # matches config.max_patient_profile_chars; enforced again defensively here
+)
 
 SYSTEM_PROMPT = """You are the query-planning stage of a clinical trial matching system.
 
@@ -67,16 +69,24 @@ def _strip_json_fences(text: str) -> str:
 
 def _parse_plan_response(raw_text: str) -> PlanResult:
     cleaned = _strip_json_fences(raw_text)
-    data = json.loads(cleaned)  # raises json.JSONDecodeError on failure — caught by caller
+    data = json.loads(
+        cleaned
+    )  # raises json.JSONDecodeError on failure — caught by caller
 
     if data.get("clarifying_question"):
-        return PlanResult(clarifying_question=data["clarifying_question"], raw_model_output=raw_text)
+        return PlanResult(
+            clarifying_question=data["clarifying_question"], raw_model_output=raw_text
+        )
 
-    structured_query = StructuredQuery(**data)  # raises pydantic.ValidationError on failure
+    structured_query = StructuredQuery(
+        **data
+    )  # raises pydantic.ValidationError on failure
     return PlanResult(structured_query=structured_query, raw_model_output=raw_text)
 
 
-async def plan_patient_profile(raw_profile_text: str, llm: LLMAdapter | None = None) -> PlanResult:
+async def plan_patient_profile(
+    raw_profile_text: str, llm: LLMAdapter | None = None
+) -> PlanResult:
     """
     Main entry point for the Plan stage.
 
@@ -95,10 +105,14 @@ async def plan_patient_profile(raw_profile_text: str, llm: LLMAdapter | None = N
         )
 
     for attempt in range(2):
-        user_prompt = profile_text if attempt == 0 else (
-            f"{profile_text}\n\n"
-            "Reminder: respond with ONLY the JSON object described in the system prompt. "
-            "No markdown, no explanation."
+        user_prompt = (
+            profile_text
+            if attempt == 0
+            else (
+                f"{profile_text}\n\n"
+                "Reminder: respond with ONLY the JSON object described in the system prompt. "
+                "No markdown, no explanation."
+            )
         )
         try:
             completion = await llm.complete(
@@ -122,7 +136,9 @@ async def plan_patient_profile(raw_profile_text: str, llm: LLMAdapter | None = N
         try:
             return _parse_plan_response(completion.text)
         except (json.JSONDecodeError, ValidationError) as exc:
-            logger.warning("Plan stage parse/validation failed (attempt %d): %s", attempt, exc)
+            logger.warning(
+                "Plan stage parse/validation failed (attempt %d): %s", attempt, exc
+            )
             if attempt == 1:
                 return PlanResult(
                     clarifying_question=(

@@ -53,7 +53,9 @@ def _normalize_for_match(text: str) -> str:
     return " ".join(text.lower().split())
 
 
-def _find_matching_criterion(gold: GoldCriterion, parsed_criteria: list) -> object | None:
+def _find_matching_criterion(
+    gold: GoldCriterion, parsed_criteria: list
+) -> object | None:
     """
     Matches a hand-labeled gold criterion to a Ground-stage-parsed criterion
     by normalized substring containment (either direction), restricted to
@@ -86,13 +88,21 @@ async def evaluate_case(
         try:
             plan_result = await plan_patient_profile(case.patient_profile, llm=llm)
             if plan_result.structured_query is not None:
-                retrieved = await retrieve_candidate_trials(plan_result.structured_query, client=client)
+                retrieved = await retrieve_candidate_trials(
+                    plan_result.structured_query, client=client
+                )
                 retrieved_ids = {t.nct_id for t in retrieved}
-                retrieval_hit = any(nct_id in retrieved_ids for nct_id in case.expected_trial_nct_ids)
+                retrieval_hit = any(
+                    nct_id in retrieved_ids for nct_id in case.expected_trial_nct_ids
+                )
             else:
-                warnings.append(f"{case.gold_case_id}: Plan stage asked for clarification; skipped retrieval check.")
+                warnings.append(
+                    f"{case.gold_case_id}: Plan stage asked for clarification; skipped retrieval check."
+                )
         except Exception as exc:
-            warnings.append(f"{case.gold_case_id}: retrieval-recall check failed: {exc}")
+            warnings.append(
+                f"{case.gold_case_id}: retrieval-recall check failed: {exc}"
+            )
 
     # --- Per-trial Ground + Verify, matched against gold criteria ----------
     criteria_by_nct_id: dict[str, list[GoldCriterion]] = {}
@@ -111,17 +121,27 @@ async def evaluate_case(
 
         trial = normalize_study(raw_study)
         if trial is None:
-            warnings.append(f"{case.gold_case_id}/{nct_id}: fetched study was missing required fields.")
+            warnings.append(
+                f"{case.gold_case_id}/{nct_id}: fetched study was missing required fields."
+            )
             continue
 
-        parsed_criteria = decompose_eligibility_criteria(trial.nct_id, trial.eligibility_text)
+        parsed_criteria = decompose_eligibility_criteria(
+            trial.nct_id, trial.eligibility_text
+        )
         if not parsed_criteria:
-            warnings.append(f"{case.gold_case_id}/{nct_id}: Ground stage produced zero criteria.")
+            warnings.append(
+                f"{case.gold_case_id}/{nct_id}: Ground stage produced zero criteria."
+            )
             continue
 
-        predicted_verdicts = await verify_all_criteria(case.patient_profile, parsed_criteria, llm=llm)
+        predicted_verdicts = await verify_all_criteria(
+            case.patient_profile, parsed_criteria, llm=llm
+        )
         await asyncio.sleep(4.0)  # Rate-limit pacing
-        predicted_by_key = {(v.criterion_type, v.criterion_index): v for v in predicted_verdicts}
+        predicted_by_key = {
+            (v.criterion_type, v.criterion_index): v for v in predicted_verdicts
+        }
 
         for gold_criterion in gold_criteria:
             matched_parsed = _find_matching_criterion(gold_criterion, parsed_criteria)
@@ -135,7 +155,9 @@ async def evaluate_case(
             key = (matched_parsed.criterion_type, matched_parsed.criterion_index)
             predicted = predicted_by_key.get(key)
             if predicted is None:
-                warnings.append(f"{case.gold_case_id}/{nct_id}: matched criterion had no predicted verdict.")
+                warnings.append(
+                    f"{case.gold_case_id}/{nct_id}: matched criterion had no predicted verdict."
+                )
                 continue
 
             comparisons.append(
@@ -187,7 +209,9 @@ async def run(skip_retrieval: bool, persist: bool) -> dict:
             "false_match_rate": false_match_rate(all_comparisons),
             "abstention_stats": abstention_stats(all_comparisons),
             "citation_validity": citation_validity(all_comparisons),
-            "retrieval_recall": retrieval_recall(retrieval_hits) if retrieval_hits else None,
+            "retrieval_recall": retrieval_recall(retrieval_hits)
+            if retrieval_hits
+            else None,
             "latency": latency_stats(llm.latencies_ms),
             "total_tokens": llm.total_tokens,
         },
@@ -221,7 +245,9 @@ async def run(skip_retrieval: bool, persist: bool) -> dict:
     return report
 
 
-async def _persist_report(gold_case_set: GoldCaseSet, per_case_results: list[dict]) -> None:
+async def _persist_report(
+    gold_case_set: GoldCaseSet, per_case_results: list[dict]
+) -> None:
     from app.db import get_engine
     from app.repositories.evaluation_runs import insert_evaluation_run
 
@@ -234,11 +260,20 @@ async def _persist_report(gold_case_set: GoldCaseSet, per_case_results: list[dic
             await insert_evaluation_run(
                 conn,
                 gold_case_id=result["case_id"],
-                predicted_verdicts={f"{c.nct_id}:{c.criterion_type}:{c.criterion_index}": c.predicted_verdict for c in comparisons},
-                expected_verdicts={f"{c.nct_id}:{c.criterion_type}:{c.criterion_index}": c.expected_verdict for c in comparisons},
+                predicted_verdicts={
+                    f"{c.nct_id}:{c.criterion_type}:{c.criterion_index}": c.predicted_verdict
+                    for c in comparisons
+                },
+                expected_verdicts={
+                    f"{c.nct_id}:{c.criterion_type}:{c.criterion_index}": c.expected_verdict
+                    for c in comparisons
+                },
                 agreement_score=agreement_rate(comparisons),
                 false_match_count=sum(
-                    1 for c in comparisons if c.expected_verdict == "no_match" and c.predicted_verdict == "match"
+                    1
+                    for c in comparisons
+                    if c.expected_verdict == "no_match"
+                    and c.predicted_verdict == "match"
                 ),
                 citation_valid=citation_validity(comparisons) == 1.0,
             )
@@ -251,7 +286,9 @@ def print_report(report: dict) -> None:
     print(f"Criteria compared:    {report['criteria_compared']}")
     print()
     print(f"Criterion agreement rate: {_fmt_pct(metrics['criterion_agreement_rate'])}")
-    print(f"False-match rate:         {_fmt_pct(metrics['false_match_rate'])}  (lower is better — most important number)")
+    print(
+        f"False-match rate:         {_fmt_pct(metrics['false_match_rate'])}  (lower is better — most important number)"
+    )
     print(f"Citation validity:        {_fmt_pct(metrics['citation_validity'])}")
     print(f"Retrieval recall:         {_fmt_pct(metrics['retrieval_recall'])}")
     abst = metrics["abstention_stats"]
@@ -262,7 +299,9 @@ def print_report(report: dict) -> None:
     )
     lat = metrics["latency"]
     if lat["count"]:
-        print(f"Verify-call latency: p50={lat['p50_ms']:.0f}ms  p95={lat['p95_ms']:.0f}ms  n={lat['count']}")
+        print(
+            f"Verify-call latency: p50={lat['p50_ms']:.0f}ms  p95={lat['p95_ms']:.0f}ms  n={lat['count']}"
+        )
     print(f"Total tokens used: {metrics['total_tokens']}")
 
     if report["warnings"]:
@@ -276,9 +315,17 @@ def _fmt_pct(value: float | None) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the gold evaluation set against the live pipeline.")
-    parser.add_argument("--skip-retrieval", action="store_true", help="Skip the Plan/Act retrieval-recall check")
-    parser.add_argument("--persist", action="store_true", help="Write evaluation_runs rows to Postgres")
+    parser = argparse.ArgumentParser(
+        description="Run the gold evaluation set against the live pipeline."
+    )
+    parser.add_argument(
+        "--skip-retrieval",
+        action="store_true",
+        help="Skip the Plan/Act retrieval-recall check",
+    )
+    parser.add_argument(
+        "--persist", action="store_true", help="Write evaluation_runs rows to Postgres"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -286,7 +333,10 @@ def main() -> None:
     print_report(report)
 
     REPORTS_DIR.mkdir(exist_ok=True)
-    report_path = REPORTS_DIR / f"run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    report_path = (
+        REPORTS_DIR
+        / f"run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    )
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2, default=str)
     print(f"\nFull report written to {report_path}")

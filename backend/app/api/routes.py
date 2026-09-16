@@ -75,7 +75,9 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
         patient_profile_id = await insert_patient_profile(
             conn,
             raw_text=body.patient_profile,
-            structured_query=plan_result.structured_query.model_dump() if plan_result.structured_query else None,
+            structured_query=plan_result.structured_query.model_dump()
+            if plan_result.structured_query
+            else None,
             clarifying_question=plan_result.clarifying_question,
         )
 
@@ -91,10 +93,14 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
 
     # --- Act stage ------------------------------------------------------------
     try:
-        trials = await retrieve_candidate_trials(plan_result.structured_query, client=ClinicalTrialsClient())
+        trials = await retrieve_candidate_trials(
+            plan_result.structured_query, client=ClinicalTrialsClient()
+        )
     except ActStageError as exc:
         # Visible, specific error state — never a silent empty result (NFR: Reliability).
-        raise HTTPException(status_code=502, detail=f"Trial retrieval failed: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"Trial retrieval failed: {exc}"
+        ) from exc
 
     if not trials:
         return MatchResponse(
@@ -113,8 +119,12 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
     for trial in trials:
         async with engine.begin() as conn:
             await upsert_trial(conn, trial)
-            criteria = decompose_eligibility_criteria(trial.nct_id, trial.eligibility_text)
-            criterion_ids_by_nct_id[trial.nct_id] = await insert_trial_criteria(conn, criteria)
+            criteria = decompose_eligibility_criteria(
+                trial.nct_id, trial.eligibility_text
+            )
+            criterion_ids_by_nct_id[trial.nct_id] = await insert_trial_criteria(
+                conn, criteria
+            )
 
         if not criteria:
             verdicts_by_nct_id[trial.nct_id] = []
@@ -124,9 +134,13 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
         trial_llm = TrackingLLMAdapter()
         trial_started_at = time.monotonic()
         try:
-            verdicts_by_nct_id[trial.nct_id] = await verify_all_criteria(body.patient_profile, criteria, llm=trial_llm)
+            verdicts_by_nct_id[trial.nct_id] = await verify_all_criteria(
+                body.patient_profile, criteria, llm=trial_llm
+            )
         except Exception as exc:  # Verify stage itself never raises in normal operation; this is a last-resort guard.
-            logger.error("Unexpected Verify stage failure for %s: %s", trial.nct_id, exc)
+            logger.error(
+                "Unexpected Verify stage failure for %s: %s", trial.nct_id, exc
+            )
             verdicts_by_nct_id[trial.nct_id] = []
         trial_stats[trial.nct_id] = {
             "latency_ms": int((time.monotonic() - trial_started_at) * 1000),

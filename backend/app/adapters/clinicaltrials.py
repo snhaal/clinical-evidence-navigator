@@ -50,9 +50,15 @@ class ClinicalTrialsClient:
                 response.raise_for_status()
         except httpx.TimeoutException as exc:
             logger.error("ClinicalTrials.gov timeout: %s", exc)
-            raise ClinicalTrialsAPIError("ClinicalTrials.gov did not respond in time.") from exc
+            raise ClinicalTrialsAPIError(
+                "ClinicalTrials.gov did not respond in time."
+            ) from exc
         except httpx.HTTPStatusError as exc:
-            logger.error("ClinicalTrials.gov returned %s: %s", exc.response.status_code, exc.response.text)
+            logger.error(
+                "ClinicalTrials.gov returned %s: %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
             raise ClinicalTrialsAPIError(
                 f"ClinicalTrials.gov returned an error (status {exc.response.status_code})."
             ) from exc
@@ -62,7 +68,9 @@ class ClinicalTrialsClient:
             studies = payload.get("studies", [])
         except (ValueError, KeyError) as exc:
             logger.error("Malformed ClinicalTrials.gov response: %s", exc)
-            raise ClinicalTrialsAPIError("Received an unexpected response shape from ClinicalTrials.gov.") from exc
+            raise ClinicalTrialsAPIError(
+                "Received an unexpected response shape from ClinicalTrials.gov."
+            ) from exc
 
         return studies
 
@@ -70,7 +78,9 @@ class ClinicalTrialsClient:
         """Fetch a single study by NCT ID — used to re-sync trial data (Maintenance & support)."""
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.get(f"{self._base_url}/studies/{nct_id}", params={"format": "json"})
+                response = await client.get(
+                    f"{self._base_url}/studies/{nct_id}", params={"format": "json"}
+                )
                 response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise ClinicalTrialsAPIError(f"Timed out fetching trial {nct_id}.") from exc

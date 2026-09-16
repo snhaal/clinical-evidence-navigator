@@ -26,17 +26,32 @@ class FakeLLM:
         self._raise_error = raise_error
         self.calls: list[str] = []
 
-    async def complete(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024,
-                        temperature: float = 0.0, json_schema: dict | None = None):
+    async def complete(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.0,
+        json_schema: dict | None = None,
+    ):
         self.calls.append(user_prompt)
         if self._raise_error:
             raise LLMProviderError("simulated provider failure")
         text = self._responses[len(self.calls) - 1]
-        return CompletionResult(text=text, input_tokens=50, output_tokens=20, model="fake-model")
+        return CompletionResult(
+            text=text, input_tokens=50, output_tokens=20, model="fake-model"
+        )
 
 
-def make_criterion(text: str, criterion_type: str = "inclusion", index: int = 0, nct_id: str = "NCT001") -> TrialCriterion:
-    return TrialCriterion(nct_id=nct_id, criterion_type=criterion_type, criterion_index=index, raw_text=text)
+def make_criterion(
+    text: str, criterion_type: str = "inclusion", index: int = 0, nct_id: str = "NCT001"
+) -> TrialCriterion:
+    return TrialCriterion(
+        nct_id=nct_id,
+        criterion_type=criterion_type,
+        criterion_index=index,
+        raw_text=text,
+    )
 
 
 # --- verify_all_criteria: the batched path -----------------------------------
@@ -46,11 +61,18 @@ def make_criterion(text: str, criterion_type: str = "inclusion", index: int = 0,
 async def test_batch_makes_exactly_one_call_for_multiple_criteria():
     """The whole point of batching: N criteria -> 1 LLM call, not N."""
     criteria = [make_criterion(f"Criterion {i}", index=i) for i in range(5)]
-    batch_response = json.dumps([
-        {"criterion_type": "inclusion", "criterion_index": i, "verdict": "match",
-         "rationale": "ok", "cited_text": f"Criterion {i}"}
-        for i in range(5)
-    ])
+    batch_response = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": i,
+                "verdict": "match",
+                "rationale": "ok",
+                "cited_text": f"Criterion {i}",
+            }
+            for i in range(5)
+        ]
+    )
     llm = FakeLLM(responses=[batch_response])
 
     verdicts = await verify_all_criteria("some profile", criteria, llm=llm)
@@ -68,11 +90,31 @@ async def test_batch_preserves_input_order_in_output():
         make_criterion("Third", index=2),
     ]
     # Response deliberately out of order.
-    batch_response = json.dumps([
-        {"criterion_type": "inclusion", "criterion_index": 2, "verdict": "no_match", "rationale": "x", "cited_text": "Third"},
-        {"criterion_type": "inclusion", "criterion_index": 0, "verdict": "match", "rationale": "x", "cited_text": "First"},
-        {"criterion_type": "inclusion", "criterion_index": 1, "verdict": "unclear", "rationale": "x", "cited_text": "Second"},
-    ])
+    batch_response = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 2,
+                "verdict": "no_match",
+                "rationale": "x",
+                "cited_text": "Third",
+            },
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 0,
+                "verdict": "match",
+                "rationale": "x",
+                "cited_text": "First",
+            },
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 1,
+                "verdict": "unclear",
+                "rationale": "x",
+                "cited_text": "Second",
+            },
+        ]
+    )
     llm = FakeLLM(responses=[batch_response])
 
     verdicts = await verify_all_criteria("profile", criteria, llm=llm)
@@ -88,12 +130,24 @@ async def test_batch_citation_not_a_substring_downgrades_only_that_criterion():
         make_criterion("Histologically confirmed breast cancer", index=0),
         make_criterion("Age 18 years or older", index=1),
     ]
-    batch_response = json.dumps([
-        {"criterion_type": "inclusion", "criterion_index": 0, "verdict": "match",
-         "rationale": "x", "cited_text": "confirmed diagnosis of lung cancer"},  # NOT a substring
-        {"criterion_type": "inclusion", "criterion_index": 1, "verdict": "match",
-         "rationale": "x", "cited_text": "Age 18 years or older"},  # valid
-    ])
+    batch_response = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 0,
+                "verdict": "match",
+                "rationale": "x",
+                "cited_text": "confirmed diagnosis of lung cancer",
+            },  # NOT a substring
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 1,
+                "verdict": "match",
+                "rationale": "x",
+                "cited_text": "Age 18 years or older",
+            },  # valid
+        ]
+    )
     llm = FakeLLM(responses=[batch_response])
 
     verdicts = await verify_all_criteria("profile", criteria, llm=llm)
@@ -101,7 +155,9 @@ async def test_batch_citation_not_a_substring_downgrades_only_that_criterion():
     bad, good = verdicts[0], verdicts[1]
     assert bad.verdict == "unclear"
     assert bad.citation_validated is False
-    assert bad.cited_text == criteria[0].raw_text  # falls back to the full, trivially-valid text
+    assert (
+        bad.cited_text == criteria[0].raw_text
+    )  # falls back to the full, trivially-valid text
     assert good.verdict == "match"
     assert good.citation_validated is True
 
@@ -111,10 +167,20 @@ async def test_batch_missing_criterion_is_repaired_individually_not_marked_uncle
     """A batch response covering only some criteria triggers a targeted repair call for the rest."""
     criteria = [make_criterion("A", index=0), make_criterion("B", index=1)]
     # Batch response only covers criterion 0.
-    batch_response = json.dumps([
-        {"criterion_type": "inclusion", "criterion_index": 0, "verdict": "match", "rationale": "x", "cited_text": "A"},
-    ])
-    repair_response = json.dumps({"verdict": "unclear", "rationale": "missing info", "cited_text": "B"})
+    batch_response = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 0,
+                "verdict": "match",
+                "rationale": "x",
+                "cited_text": "A",
+            },
+        ]
+    )
+    repair_response = json.dumps(
+        {"verdict": "unclear", "rationale": "missing info", "cited_text": "B"}
+    )
     llm = FakeLLM(responses=[batch_response, repair_response])
 
     verdicts = await verify_all_criteria("profile", criteria, llm=llm)
@@ -137,7 +203,9 @@ async def test_entire_batch_failure_falls_back_to_unclear_for_everything_without
 
     verdicts = await verify_all_criteria("profile", criteria, llm=llm)
 
-    assert len(llm.calls) == 2  # exactly 2 batch attempts, no per-criterion repair calls
+    assert (
+        len(llm.calls) == 2
+    )  # exactly 2 batch attempts, no per-criterion repair calls
     assert all(v.verdict == "unclear" for v in verdicts)
     assert all(v.citation_validated is False for v in verdicts)
 
@@ -165,10 +233,24 @@ async def test_empty_criteria_list_returns_empty_without_calling_llm():
 async def test_batch_ignores_items_referencing_unknown_criteria():
     """A response item that doesn't match any known (type, index) is ignored, not crashed on."""
     criteria = [make_criterion("A", index=0)]
-    batch_response = json.dumps([
-        {"criterion_type": "inclusion", "criterion_index": 0, "verdict": "match", "rationale": "x", "cited_text": "A"},
-        {"criterion_type": "exclusion", "criterion_index": 99, "verdict": "match", "rationale": "x", "cited_text": "ghost"},
-    ])
+    batch_response = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 0,
+                "verdict": "match",
+                "rationale": "x",
+                "cited_text": "A",
+            },
+            {
+                "criterion_type": "exclusion",
+                "criterion_index": 99,
+                "verdict": "match",
+                "rationale": "x",
+                "cited_text": "ghost",
+            },
+        ]
+    )
     llm = FakeLLM(responses=[batch_response])
 
     verdicts = await verify_all_criteria("profile", criteria, llm=llm)
@@ -179,14 +261,25 @@ async def test_batch_ignores_items_referencing_unknown_criteria():
 
 @pytest.mark.asyncio
 async def test_exclusion_match_verdict_is_trusted_with_valid_citation():
-    criteria = [make_criterion("No prior immunotherapy", criterion_type="exclusion", index=0)]
-    batch_response = json.dumps([
-        {"criterion_type": "exclusion", "criterion_index": 0, "verdict": "match",
-         "rationale": "Patient received prior immunotherapy.", "cited_text": "No prior immunotherapy"},
-    ])
+    criteria = [
+        make_criterion("No prior immunotherapy", criterion_type="exclusion", index=0)
+    ]
+    batch_response = json.dumps(
+        [
+            {
+                "criterion_type": "exclusion",
+                "criterion_index": 0,
+                "verdict": "match",
+                "rationale": "Patient received prior immunotherapy.",
+                "cited_text": "No prior immunotherapy",
+            },
+        ]
+    )
     llm = FakeLLM(responses=[batch_response])
 
-    verdicts = await verify_all_criteria("Patient previously received immunotherapy", criteria, llm=llm)
+    verdicts = await verify_all_criteria(
+        "Patient previously received immunotherapy", criteria, llm=llm
+    )
 
     assert verdicts[0].verdict == "match"
     assert verdicts[0].criterion_type == "exclusion"
@@ -198,7 +291,13 @@ async def test_exclusion_match_verdict_is_trusted_with_valid_citation():
 @pytest.mark.asyncio
 async def test_single_criterion_valid_match_is_trusted():
     criterion = make_criterion("Age 18 years or older")
-    response = json.dumps({"verdict": "match", "rationale": "64yo satisfies this.", "cited_text": "Age 18 years or older"})
+    response = json.dumps(
+        {
+            "verdict": "match",
+            "rationale": "64yo satisfies this.",
+            "cited_text": "Age 18 years or older",
+        }
+    )
     llm = FakeLLM(responses=[response])
 
     verdict = await verify_criterion("64-year-old patient", criterion, llm=llm)

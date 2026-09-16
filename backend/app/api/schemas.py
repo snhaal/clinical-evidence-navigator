@@ -16,7 +16,9 @@ DISCLAIMER = (
 
 
 class MatchRequest(BaseModel):
-    patient_profile: str = Field(..., min_length=1, description="Free-text patient profile")
+    patient_profile: str = Field(
+        ..., min_length=1, description="Free-text patient profile"
+    )
 
 
 class MatchResponse(BaseModel):

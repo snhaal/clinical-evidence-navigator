@@ -51,11 +51,16 @@ def test_build_query_params_never_uses_exclusions_as_a_filter():
 
 SAMPLE_STUDY = {
     "protocolSection": {
-        "identificationModule": {"nctId": "NCT01234567", "briefTitle": "A Study of Something"},
+        "identificationModule": {
+            "nctId": "NCT01234567",
+            "briefTitle": "A Study of Something",
+        },
         "statusModule": {"overallStatus": "RECRUITING"},
         "designModule": {"phases": ["PHASE3"]},
         "conditionsModule": {"conditions": ["Breast Cancer"]},
-        "eligibilityModule": {"eligibilityCriteria": "Inclusion Criteria:\n\n- Age 18+\n\nExclusion Criteria:\n\n- Pregnant"},
+        "eligibilityModule": {
+            "eligibilityCriteria": "Inclusion Criteria:\n\n- Age 18+\n\nExclusion Criteria:\n\n- Pregnant"
+        },
     }
 }
 
@@ -73,7 +78,9 @@ def test_normalize_study_extracts_expected_fields():
 
 
 def test_normalize_study_returns_none_for_missing_nct_id():
-    broken = {"protocolSection": {"identificationModule": {"briefTitle": "No ID Study"}}}
+    broken = {
+        "protocolSection": {"identificationModule": {"briefTitle": "No ID Study"}}
+    }
     assert normalize_study(broken) is None
 
 
@@ -95,10 +102,14 @@ class FakeClinicalTrialsClient:
 
 @pytest.mark.asyncio
 async def test_retrieve_candidate_trials_normalizes_and_filters_bad_records():
-    broken_record = {"protocolSection": {"identificationModule": {"briefTitle": "missing id"}}}
+    broken_record = {
+        "protocolSection": {"identificationModule": {"briefTitle": "missing id"}}
+    }
     client = FakeClinicalTrialsClient(studies=[SAMPLE_STUDY, broken_record])
 
-    trials = await retrieve_candidate_trials(StructuredQuery(condition="breast cancer"), client=client)
+    trials = await retrieve_candidate_trials(
+        StructuredQuery(condition="breast cancer"), client=client
+    )
 
     assert len(trials) == 1
     assert trials[0].nct_id == "NCT01234567"
@@ -107,7 +118,9 @@ async def test_retrieve_candidate_trials_normalizes_and_filters_bad_records():
 @pytest.mark.asyncio
 async def test_retrieve_candidate_trials_empty_result_is_not_an_error():
     client = FakeClinicalTrialsClient(studies=[])
-    trials = await retrieve_candidate_trials(StructuredQuery(condition="an extremely rare condition"), client=client)
+    trials = await retrieve_candidate_trials(
+        StructuredQuery(condition="an extremely rare condition"), client=client
+    )
     assert trials == []
 
 
@@ -115,4 +128,6 @@ async def test_retrieve_candidate_trials_empty_result_is_not_an_error():
 async def test_retrieve_candidate_trials_raises_act_stage_error_on_api_failure():
     client = FakeClinicalTrialsClient(raise_error=True)
     with pytest.raises(ActStageError):
-        await retrieve_candidate_trials(StructuredQuery(condition="lung cancer"), client=client)
+        await retrieve_candidate_trials(
+            StructuredQuery(condition="lung cancer"), client=client
+        )

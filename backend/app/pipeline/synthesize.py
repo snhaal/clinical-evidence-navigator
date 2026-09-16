@@ -12,7 +12,9 @@ from app.pipeline.schemas import CriterionVerdict, NormalizedTrial, TrialMatchSu
 _VERDICT_RANK_PRIORITY = {"match": 0, "unclear": 1, "no_match": 2}
 
 
-def summarize_trial(trial: NormalizedTrial, verdicts: list[CriterionVerdict]) -> TrialMatchSummary:
+def summarize_trial(
+    trial: NormalizedTrial, verdicts: list[CriterionVerdict]
+) -> TrialMatchSummary:
     """
     Aggregates one trial's per-criterion verdicts into an overall verdict.
 
@@ -73,7 +75,7 @@ def rank_trials(summaries: list[TrialMatchSummary]) -> list[TrialMatchSummary]:
     return sorted(
         summaries,
         key=lambda s: (
-            s.hard_exclusion_hit,                       # False (0) sorts before True (1)
+            s.hard_exclusion_hit,  # False (0) sorts before True (1)
             _VERDICT_RANK_PRIORITY[s.overall_verdict],
             -s.satisfied_count,
             s.unclear_count,

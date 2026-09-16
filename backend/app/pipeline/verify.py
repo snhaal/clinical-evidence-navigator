@@ -111,7 +111,9 @@ Rules:
 
 _BATCH_TOKENS_PER_CRITERION = 220  # Each JSON item is ~100-140 tokens with evidence_quote; 220 gives ample headroom
 _BATCH_TOKENS_FLOOR = 800
-_BATCH_TOKENS_CEILING = 4800  # Stays safely under Groq's 8,000 TPM in-flight reservation ceiling
+_BATCH_TOKENS_CEILING = (
+    4800  # Stays safely under Groq's 8,000 TPM in-flight reservation ceiling
+)
 
 
 def _batch_max_output_tokens(num_criteria: int, attempt: int) -> int:
@@ -123,7 +125,10 @@ def _batch_max_output_tokens(num_criteria: int, attempt: int) -> int:
     parse failures) is itself evidence the first budget was too tight,
     not just noise worth retrying identically.
     """
-    base = min(_BATCH_TOKENS_CEILING, max(_BATCH_TOKENS_FLOOR, _BATCH_TOKENS_PER_CRITERION * num_criteria))
+    base = min(
+        _BATCH_TOKENS_CEILING,
+        max(_BATCH_TOKENS_FLOOR, _BATCH_TOKENS_PER_CRITERION * num_criteria),
+    )
     if attempt == 0:
         return base
     return min(_BATCH_TOKENS_CEILING, int(base * 1.5))
@@ -141,14 +146,24 @@ def _batch_response_schema() -> dict:
         "items": {
             "type": "object",
             "properties": {
-                "criterion_type": {"type": "string", "enum": ["inclusion", "exclusion"]},
+                "criterion_type": {
+                    "type": "string",
+                    "enum": ["inclusion", "exclusion"],
+                },
                 "criterion_index": {"type": "integer"},
                 "evidence_quote": {"type": "string", "nullable": True},
                 "rationale": {"type": "string"},
                 "verdict": {"type": "string", "enum": ["match", "no_match", "unclear"]},
                 "cited_text": {"type": "string"},
             },
-            "required": ["criterion_type", "criterion_index", "evidence_quote", "rationale", "verdict", "cited_text"],
+            "required": [
+                "criterion_type",
+                "criterion_index",
+                "evidence_quote",
+                "rationale",
+                "verdict",
+                "cited_text",
+            ],
             "additionalProperties": False,
         },
     }
@@ -195,13 +210,20 @@ def _normalize_verdict_str(raw: str | None) -> str:
     return "unclear"
 
 
-def _validate_citation(verdict: CriterionVerdict, criterion: TrialCriterion) -> CriterionVerdict:
+def _validate_citation(
+    verdict: CriterionVerdict, criterion: TrialCriterion
+) -> CriterionVerdict:
     # 1. Fast exact check
     if verdict.cited_text in criterion.raw_text:
         return verdict
 
     # 2. Check unescaped markdown comparison operators (e.g., < vs \<, >= vs \>=)
-    candidate = verdict.cited_text.replace("<=", r"\<=").replace(">=", r"\>=").replace("<", r"\<").replace(">", r"\>")
+    candidate = (
+        verdict.cited_text.replace("<=", r"\<=")
+        .replace(">=", r"\>=")
+        .replace("<", r"\<")
+        .replace(">", r"\>")
+    )
     if candidate in criterion.raw_text:
         verdict.cited_text = candidate
         return verdict
@@ -231,7 +253,9 @@ def _validate_citation(verdict: CriterionVerdict, criterion: TrialCriterion) -> 
 # --- Single-criterion path (kept as the repair mechanism for batch gaps) ----
 
 
-def _build_single_user_prompt(patient_profile_text: str, criterion: TrialCriterion) -> str:
+def _build_single_user_prompt(
+    patient_profile_text: str, criterion: TrialCriterion
+) -> str:
     return (
         f"Patient profile:\n{patient_profile_text}\n\n"
         f"Criterion type: {criterion.criterion_type}\n"
@@ -274,34 +298,56 @@ async def verify_criterion(
         try:
             completion = await llm.complete(
                 system_prompt=SINGLE_SYSTEM_PROMPT,
-                user_prompt=user_prompt if attempt == 0 else user_prompt + "\n\nReminder: respond with ONLY the JSON object described above.",
+                user_prompt=user_prompt
+                if attempt == 0
+                else user_prompt
+                + "\n\nReminder: respond with ONLY the JSON object described above.",
                 max_tokens=800,
                 temperature=0.0,
             )
         except LLMProviderError as exc:
-            logger.error("Verify stage LLM call failed for %s criterion %d (attempt %d): %s",
-                         criterion.nct_id, criterion.criterion_index, attempt, exc)
+            logger.error(
+                "Verify stage LLM call failed for %s criterion %d (attempt %d): %s",
+                criterion.nct_id,
+                criterion.criterion_index,
+                attempt,
+                exc,
+            )
             if attempt == 1:
-                return _fallback_unclear(criterion, reason="Could not be evaluated due to a provider error.")
+                return _fallback_unclear(
+                    criterion, reason="Could not be evaluated due to a provider error."
+                )
             continue
 
         try:
             return _parse_single(completion.text, criterion)
         except (json.JSONDecodeError, ValidationError, KeyError) as exc:
-            logger.warning("Verify stage parse failure for %s criterion %d (attempt %d): %s",
-                           criterion.nct_id, criterion.criterion_index, attempt, exc)
+            logger.warning(
+                "Verify stage parse failure for %s criterion %d (attempt %d): %s",
+                criterion.nct_id,
+                criterion.criterion_index,
+                attempt,
+                exc,
+            )
             if attempt == 1:
-                return _fallback_unclear(criterion, reason="Could not be evaluated due to a malformed model response.")
+                return _fallback_unclear(
+                    criterion,
+                    reason="Could not be evaluated due to a malformed model response.",
+                )
             continue
 
     # Unreachable — the loop above always returns on its final attempt.
-    return _fallback_unclear(criterion, reason="Verify stage exhausted retries without returning.")
+    return _fallback_unclear(
+        criterion, reason="Verify stage exhausted retries without returning."
+    )
 
 
 # --- Batched path: the default, used by verify_all_criteria -----------------
 
 
-def _build_batch_user_prompt(patient_profile_text: str, criteria: list[TrialCriterion]) -> str:
+def _build_batch_user_prompt(
+    patient_profile_text: str, criteria: list[TrialCriterion]
+) -> str:
     lines = [f"Patient profile:\n{patient_profile_text}\n", "Criteria:"]
     for c in criteria:
         lines.append(f"[{c.criterion_type} #{c.criterion_index}] {c.raw_text}")
@@ -338,14 +384,22 @@ async def verify_trial_criteria(
         try:
             completion = await llm.complete(
                 system_prompt=BATCH_SYSTEM_PROMPT,
-                user_prompt=user_prompt if attempt == 0 else user_prompt + "\n\nReminder: respond with ONLY the JSON array described above, one object per criterion.",
+                user_prompt=user_prompt
+                if attempt == 0
+                else user_prompt
+                + "\n\nReminder: respond with ONLY the JSON array described above, one object per criterion.",
                 max_tokens=_batch_max_output_tokens(len(criteria), attempt),
                 temperature=0.0,
                 json_schema=schema,
             )
         except LLMProviderError as exc:
             last_error = f"provider error: {exc}"
-            logger.error("Batched verify call failed for %s (attempt %d): %s", criteria[0].nct_id, attempt, exc)
+            logger.error(
+                "Batched verify call failed for %s (attempt %d): %s",
+                criteria[0].nct_id,
+                attempt,
+                exc,
+            )
             continue
 
         try:
@@ -355,28 +409,46 @@ async def verify_trial_criteria(
                 raise ValueError("Expected a JSON array of criterion verdicts.")
         except (json.JSONDecodeError, ValueError) as exc:
             last_error = f"malformed batch response: {exc}"
-            logger.warning("Batched verify parse failure for %s (attempt %d): %s", criteria[0].nct_id, attempt, exc)
+            logger.warning(
+                "Batched verify parse failure for %s (attempt %d): %s",
+                criteria[0].nct_id,
+                attempt,
+                exc,
+            )
             continue
 
         for item in items:
             try:
-                key: CriterionKey = (item["criterion_type"], int(item["criterion_index"]))
+                key: CriterionKey = (
+                    item["criterion_type"],
+                    int(item["criterion_index"]),
+                )
                 criterion = criteria_by_key.get(key)
                 if criterion is None:
-                    logger.warning("Batch response referenced unknown criterion %s for %s; ignoring.", key, criteria[0].nct_id)
+                    logger.warning(
+                        "Batch response referenced unknown criterion %s for %s; ignoring.",
+                        key,
+                        criteria[0].nct_id,
+                    )
                     continue
                 verdict = CriterionVerdict(
                     nct_id=criterion.nct_id,
                     criterion_type=criterion.criterion_type,
                     criterion_index=criterion.criterion_index,
-                    verdict=_normalize_verdict_str(item.get("verdict") or item.get("status")),
+                    verdict=_normalize_verdict_str(
+                        item.get("verdict") or item.get("status")
+                    ),
                     rationale=item.get("rationale") or item.get("reasoning") or "",
                     cited_text=item.get("cited_text") or criterion.raw_text,
                     evidence_quote=item.get("evidence_quote"),
                 )
                 parsed_by_key[key] = _validate_citation(verdict, criterion)
             except (KeyError, TypeError, ValidationError) as exc:
-                logger.warning("Skipping one malformed item in batch response for %s: %s", criteria[0].nct_id, exc)
+                logger.warning(
+                    "Skipping one malformed item in batch response for %s: %s",
+                    criteria[0].nct_id,
+                    exc,
+                )
                 continue
 
         break  # Got a usable (if partial) response — stop retrying the whole batch.
@@ -388,15 +460,23 @@ async def verify_trial_criteria(
         # The WHOLE batch failed (provider error or unparseable both attempts) —
         # fall back to unclear for all of them rather than spending N more
         # individual calls we already have reason to believe will also fail.
-        logger.error("Entire batch failed for %s (%s); marking all %d criteria unclear.",
-                     criteria[0].nct_id, last_error, len(missing))
+        logger.error(
+            "Entire batch failed for %s (%s); marking all %d criteria unclear.",
+            criteria[0].nct_id,
+            last_error,
+            len(missing),
+        )
         for c in missing:
             parsed_by_key[(c.criterion_type, c.criterion_index)] = _fallback_unclear(
                 c, reason=f"Batch verification failed ({last_error})."
             )
     else:
         for c in missing:
-            logger.info("Repairing 1 criterion omitted from batch response for %s (#%d).", c.nct_id, c.criterion_index)
+            logger.info(
+                "Repairing 1 criterion omitted from batch response for %s (#%d).",
+                c.nct_id,
+                c.criterion_index,
+            )
             repaired = await verify_criterion(patient_profile_text, c, llm=llm)
             parsed_by_key[(c.criterion_type, c.criterion_index)] = repaired
 
