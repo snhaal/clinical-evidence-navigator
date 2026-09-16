@@ -14,7 +14,7 @@ class StructuredQuery(BaseModel):
     """
     Fields map to ClinicalTrials.gov API v2 search fields where possible
     (condition -> query.cond, status -> filter.overallStatus, etc.).
-    The Act stage (Module 4) owns that mapping; this schema just captures
+    The Act stage owns that mapping; this schema just captures
     what was extracted from the free-text profile.
     """
 

@@ -1,10 +1,9 @@
 """
 FastAPI entrypoint.
 
-This is deliberately a thin shell in Module 2: it wires up the app, CORS,
-and a health check against the DB. The actual /match endpoint (invoking the
-Plan -> Act -> Ground -> Verify -> Synthesize loop) is added in Module 6
-once each stage exists.
+Wires up the application, CORS middleware, database connection lifespan,
+health check endpoints, and the clinical trial matching & verification router
+(Plan -> Act -> Ground -> Verify -> Synthesize pipeline).
 """
 
 import logging
@@ -77,7 +76,7 @@ def create_app() -> FastAPI:
             ),
         }
 
-    # Pipeline routes.
+    # Clinical Trial Matching & Verification Endpoint
     app.include_router(match_router)
     app.include_router(match_router, prefix="/api")
 

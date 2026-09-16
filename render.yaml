@@ -18,11 +18,17 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: LLM_PROVIDER
-        value: anthropic
+        value: gemini
+      - key: LLM_MODEL
+        value: gemini-3.5-flash-lite
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
       - key: LLM_PROVIDER_API_KEY
         sync: false
-      - key: LLM_MODEL
-        value: claude-sonnet-4-6
+      - key: LLM_MAX_REQUESTS_PER_MINUTE
+        value: "14"
       - key: CLINICALTRIALS_API_BASE
         value: https://clinicaltrials.gov/api/v2
       - key: MAX_REQUESTS_PER_IP_PER_HOUR
@@ -30,10 +36,10 @@ services:
       - key: MAX_PATIENT_PROFILE_CHARS
         value: "4000"
       - key: MAX_TRIALS_PER_QUERY
-        value: "10"
+        value: "3"
       - key: APP_URL
         sync: false  # set to your deployed Vercel frontend URL, e.g. https://your-app.vercel.app
       - key: ENVIRONMENT
         value: production
       - key: REQUEST_TIMEOUT_SECONDS
-        value: "12"
+        value: "60"
