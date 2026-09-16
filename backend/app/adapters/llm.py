@@ -225,7 +225,7 @@ class LLMAdapter:
                     break
 
                 header_wait = _parse_retry_after(exc)
-                if header_wait is not None and header_wait > 0:
+                if header_wait is not None and header_wait >= 1.0:
                     wait_seconds = header_wait + 0.5
                     logger.warning(
                         "Rate limited by %s (attempt %d/%d) — provider specified wait of %.2fs (+0.5s margin) = %.2fs before retrying.",
@@ -558,16 +558,12 @@ def _parse_duration_str(val: Any) -> float | None:
         return float(s)
     except ValueError:
         pass
-    match = re.match(r"^([\d\.]+)\s*(ms|s|m|h)?$", s)
+    match = re.match(r"^([\d\.]+)\s*(ms|s)?$", s)
     if match:
         amount = float(match.group(1))
         unit = match.group(2) or "s"
         if unit == "ms":
             return amount / 1000.0
-        elif unit == "m":
-            return amount * 60.0
-        elif unit == "h":
-            return amount * 3600.0
         return amount
     return None
 
@@ -575,8 +571,7 @@ def _parse_duration_str(val: Any) -> float | None:
 def _parse_retry_after(exc: Exception) -> float | None:
     """
     Extracts the recommended wait duration in seconds from rate-limit response headers
-    (`retry-after`, `x-ratelimit-reset-tokens`, `x-ratelimit-reset-requests`) or
-    from the provider error message string. Returns None if unparseable.
+    (`retry-after` or `x-ratelimit-reset-tokens`). Returns None if unparseable or excessive.
     """
     candidates = [exc]
     if isinstance(exc, _RateLimitSignal) and getattr(exc, "original_exc", None):
@@ -586,35 +581,30 @@ def _parse_retry_after(exc: Exception) -> float | None:
         candidates.append(cause)
 
     for cand in candidates:
-        # 1. Check HTTP response headers (OpenAI / Groq API error response)
+        # Check HTTP response headers for retry-after or x-ratelimit-reset-tokens
         resp = getattr(cand, "response", None)
         if resp is not None:
             headers = getattr(resp, "headers", None) or {}
-            retry_after = headers.get("retry-after")
-            val = _parse_duration_str(retry_after)
-            if val is not None and val > 0:
-                return val
-
+            # 1. x-ratelimit-reset-tokens (e.g. "3.57s" or "250ms")
             reset_tokens = headers.get("x-ratelimit-reset-tokens")
             val = _parse_duration_str(reset_tokens)
-            if val is not None and val > 0:
+            if val is not None and 0 < val <= 30.0:
                 return val
 
-            reset_requests = headers.get("x-ratelimit-reset-requests")
-            val = _parse_duration_str(reset_requests)
-            if val is not None and val > 0:
+            # 2. retry-after (e.g. "4")
+            retry_after = headers.get("retry-after")
+            val = _parse_duration_str(retry_after)
+            if val is not None and 0 < val <= 30.0:
                 return val
 
-        # 2. Check error message text for "try again in X.Xs" or similar
+        # Check error message text for "try again in X.Xs"
         msg = str(cand)
-        match = re.search(r"try again in ([\d\.]+)\s*(s|ms|m)?", msg, re.IGNORECASE)
+        match = re.search(r"try again in ([\d\.]+)\s*(s|ms)", msg, re.IGNORECASE)
         if match:
             amount = float(match.group(1))
-            unit = (match.group(2) or "s").lower()
-            if unit == "ms":
-                return amount / 1000.0
-            elif unit == "m":
-                return amount * 60.0
-            return amount
+            unit = match.group(2).lower()
+            val = amount / 1000.0 if unit == "ms" else amount
+            if 0 < val <= 30.0:
+                return val
 
     return None

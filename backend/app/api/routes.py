@@ -127,7 +127,7 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
     for idx, trial in enumerate(candidate_trials):
         if idx > 0:
             # Enforce cooldown between candidate study verifications to allow rolling token window to clear
-            await asyncio.sleep(6.0)
+            await asyncio.sleep(4.0)
 
         async with engine.begin() as conn:
             await upsert_trial(conn, trial)

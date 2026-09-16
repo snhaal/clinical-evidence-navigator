@@ -79,6 +79,7 @@ def create_app() -> FastAPI:
 
     # Pipeline routes.
     app.include_router(match_router)
+    app.include_router(match_router, prefix="/api")
 
     return app
 
