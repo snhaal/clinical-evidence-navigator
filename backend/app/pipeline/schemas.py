@@ -105,6 +105,10 @@ class CriterionVerdict(BaseModel):
     verdict: str = Field(..., pattern="^(match|no_match|unclear)$")
     rationale: str = Field(..., min_length=1)
     cited_text: str = Field(..., min_length=1)
+    evidence_quote: str | None = Field(
+        default=None,
+        description="Verbatim quote from the patient note, or None/null if not mentioned.",
+    )
     citation_validated: bool = Field(
         default=True,
         description="False if the model's original citation failed substring validation and had to be overridden.",

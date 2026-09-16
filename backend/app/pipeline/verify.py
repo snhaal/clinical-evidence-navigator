@@ -49,20 +49,27 @@ any other criterion or any other trial, and must not assume one.
 
 Respond with ONLY a single JSON object, no markdown fences, no commentary:
 {
+  "criterion_type": "inclusion" | "exclusion",
+  "criterion_index": <the index number of the criterion>,
+  "evidence_quote": <verbatim quote from the patient profile, or strictly null if the topic or condition is not mentioned in the profile>,
+  "rationale": "one sentence explaining the verdict based strictly on evidence_quote",
   "verdict": "match" | "no_match" | "unclear",
-  "rationale": "one sentence explaining the verdict",
   "cited_text": "the exact substring of the criterion text below that your verdict is based on"
 }
 
 Rules:
-- "match" means the patient profile clearly satisfies this criterion as written.
-- "no_match" means the patient profile clearly contradicts or fails this criterion as written.
-- "unclear" means the patient profile does not contain enough information to judge this criterion. \
-This is the correct answer whenever information is simply missing — never guess "match" or "no_match" \
-to fill a gap.
-- "cited_text" must be copied VERBATIM from the criterion text you were given — do not paraphrase, \
-summarize, or combine it with the patient profile. If you cannot point to a specific substring \
-(e.g. your verdict is "unclear" due to missing information), cite the full criterion text instead.
+1. Evidence-First Rule: You must extract "evidence_quote" as a verbatim substring from the patient profile before deciding the verdict. If the topic, condition, lab value, or score is not mentioned in the patient note, "evidence_quote" must strictly be null.
+2. Explicit Absence Rule: Never assume unmentioned conditions, baseline normality, or standard-of-care. If a lab value, staging, mutation, or functional score is absent from the note, output status 'INSUFFICIENT_DATA' (verdict "unclear"). Never guess "match" or "no_match" to fill a gap.
+3. Compound Criteria Rule: If a criterion requires multiple conditions linked by 'AND' or commas, every single component must be explicitly documented in the note. If any sub-clause is missing, output status 'INSUFFICIENT_DATA' (verdict "unclear").
+4. Exclusion Criteria Rule: Carefully distinguish trial eligibility from criterion satisfaction. For an exclusion criterion, if the patient has the condition, the criterion is MET (verdict "match", rendering them ineligible). If the patient explicitly does NOT have the condition (or it is explicitly negated in the note), the exclusion does not apply (verdict "no_match"). If not mentioned, output status 'INSUFFICIENT_DATA' (verdict "unclear").
+5. Inclusion Criteria Rule:
+   - "match": the patient profile clearly satisfies this criterion as written.
+   - "no_match": the patient profile clearly contradicts or fails this criterion as written.
+   - "unclear": the profile lacks enough information to judge this criterion (INSUFFICIENT_DATA).
+6. Clinical Reasoning:
+   - For 'Male or non pregnant female', a post-menopausal woman (e.g. 60+ years old) or a male satisfies non-pregnant female / male ("match").
+   - A documented cancer stage (e.g. Stage III) satisfies stage range criteria (e.g. Stage II-III) unless explicitly contradictory.
+7. Citation Rule: "cited_text" must be copied VERBATIM from the criterion text you were given — do not paraphrase, summarize, or modify comparison operators (<, <=, >=). If verdict is "unclear" due to missing information, cite the full criterion text instead.
 """
 
 # --- Batched prompt: judges every criterion for one trial in one call -------
@@ -79,27 +86,32 @@ object per criterion listed below (same count, none skipped, none invented), eac
 {
   "criterion_type": "inclusion" | "exclusion",
   "criterion_index": <the index number shown next to that criterion>,
+  "evidence_quote": <verbatim quote from the patient profile, or strictly null if the topic or condition is not mentioned in the profile>,
+  "rationale": "one sentence explaining the verdict for THIS criterion based strictly on evidence_quote",
   "verdict": "match" | "no_match" | "unclear",
-  "rationale": "one sentence explaining the verdict for THIS criterion",
   "cited_text": "the exact substring of THIS criterion's own text that your verdict is based on"
 }
 
 Rules:
-- "match" means the patient profile clearly satisfies that criterion as written.
-- "no_match" means the patient profile clearly contradicts or fails that criterion as written.
-- "unclear" means the profile lacks enough information to judge that ONE criterion — the correct \
-answer whenever information is missing for it specifically. Never guess to fill a gap.
-- "cited_text" must be copied VERBATIM from THAT criterion's own text — never from a different \
-criterion, never paraphrased. If unclear due to missing information, cite that criterion's full \
-text instead.
-- criterion_type and criterion_index in your response must exactly match one of the criteria listed \
-below, so each verdict can be matched back to the right criterion.
+1. Evidence-First Rule: For each criterion, inspect the patient profile and extract "evidence_quote" as a verbatim substring from the profile before deciding the verdict. If the topic, condition, lab value, or score is not mentioned in the patient note, "evidence_quote" must strictly be null.
+2. Explicit Absence Rule: Never assume unmentioned conditions, baseline normality, or standard-of-care. If a lab value, staging, mutation, or functional score is absent from the note, output status 'INSUFFICIENT_DATA' (verdict "unclear"). Never guess "match" or "no_match" to fill a gap.
+3. Compound Criteria Rule: If a criterion requires multiple conditions linked by 'AND' or commas, every single component must be explicitly documented in the note. If any sub-clause is missing, output status 'INSUFFICIENT_DATA' (verdict "unclear").
+4. Exclusion Criteria Rule: Carefully distinguish trial eligibility from criterion satisfaction. For an exclusion criterion, if the patient has the condition, the criterion is MET (verdict "match", rendering them ineligible). If the patient explicitly does NOT have the condition (or it is explicitly negated in the note), the exclusion does not apply (verdict "no_match"). If not mentioned, output status 'INSUFFICIENT_DATA' (verdict "unclear").
+5. Inclusion Criteria Rule:
+   - "match": the patient profile clearly satisfies that criterion as written.
+   - "no_match": the patient profile clearly contradicts or fails that criterion as written.
+   - "unclear": the profile lacks enough information to judge that criterion (INSUFFICIENT_DATA).
+6. Clinical Reasoning:
+   - For 'Male or non pregnant female', a post-menopausal woman (e.g. 60+ years old) or a male satisfies non-pregnant female / male ("match").
+   - A documented cancer stage (e.g. Stage III) satisfies stage range criteria (e.g. Stage II-III) unless explicitly contradictory.
+7. Citation Rule: "cited_text" must be copied VERBATIM from THAT criterion's own text — never from a different criterion, never paraphrased, and preserve comparison operators (<, <=, >=) exactly as written in the criterion text. If verdict is "unclear" due to missing information, cite that criterion's full text instead.
+8. criterion_type and criterion_index in your response must exactly match one of the criteria listed below.
 """
 
 
-_BATCH_TOKENS_PER_CRITERION = 350  # each item is ~short JSON, but cited_text can copy a long criterion verbatim
+_BATCH_TOKENS_PER_CRITERION = 220  # Each JSON item is ~100-140 tokens with evidence_quote; 220 gives ample headroom
 _BATCH_TOKENS_FLOOR = 800
-_BATCH_TOKENS_CEILING = 8000  # generous but bounded, so a pathological trial can't balloon cost/latency
+_BATCH_TOKENS_CEILING = 4800  # Stays safely under Groq's 8,000 TPM in-flight reservation ceiling
 
 
 def _batch_max_output_tokens(num_criteria: int, attempt: int) -> int:
@@ -122,12 +134,7 @@ def _batch_response_schema() -> dict:
     JSON Schema passed to providers that support server-side schema
     enforcement (Gemini's response_schema, Groq's strict json_schema mode
     on gpt-oss models). `additionalProperties: false` is required on the
-    item object for Groq/OpenAI-style strict mode specifically — without
-    it, Groq rejects the request outright with a 400 before even trying,
-    which wastes an entire call (and its rate-limit budget) on every
-    single batch before falling back to unenforced JSON. Gemini ignores
-    this key harmlessly, so it's safe to include unconditionally rather
-    than making the schema provider-specific.
+    item object for Groq/OpenAI-style strict mode specifically.
     """
     return {
         "type": "array",
@@ -136,11 +143,12 @@ def _batch_response_schema() -> dict:
             "properties": {
                 "criterion_type": {"type": "string", "enum": ["inclusion", "exclusion"]},
                 "criterion_index": {"type": "integer"},
-                "verdict": {"type": "string", "enum": ["match", "no_match", "unclear"]},
+                "evidence_quote": {"type": "string", "nullable": True},
                 "rationale": {"type": "string"},
+                "verdict": {"type": "string", "enum": ["match", "no_match", "unclear"]},
                 "cited_text": {"type": "string"},
             },
-            "required": ["criterion_type", "criterion_index", "verdict", "rationale", "cited_text"],
+            "required": ["criterion_type", "criterion_index", "evidence_quote", "rationale", "verdict", "cited_text"],
             "additionalProperties": False,
         },
     }
@@ -178,15 +186,32 @@ def _normalize_text(text: str | None) -> str:
     return " ".join(cleaned.lower().split())
 
 
+def _normalize_verdict_str(raw: str | None) -> str:
+    val = (raw or "").strip()
+    if val in ("MET", "MATCH", "met", "match"):
+        return "match"
+    if val in ("NOT_MET", "NO_MATCH", "not_met", "no_match"):
+        return "no_match"
+    return "unclear"
+
+
 def _validate_citation(verdict: CriterionVerdict, criterion: TrialCriterion) -> CriterionVerdict:
     # 1. Fast exact check
     if verdict.cited_text in criterion.raw_text:
         return verdict
 
-    # 2. Resilient check (handles quote, punctuation, or spacing differences from the LLM)
+    # 2. Check unescaped markdown comparison operators (e.g., < vs \<, >= vs \>=)
+    candidate = verdict.cited_text.replace("<=", r"\<=").replace(">=", r"\>=").replace("<", r"\<").replace(">", r"\>")
+    if candidate in criterion.raw_text:
+        verdict.cited_text = candidate
+        return verdict
+
+    # 3. Resilient check (handles quote, punctuation, or spacing differences from the LLM)
     norm_cited = _normalize_text(verdict.cited_text)
     norm_source = _normalize_text(criterion.raw_text)
     if norm_cited and norm_cited in norm_source:
+        if norm_cited == norm_source:
+            verdict.cited_text = criterion.raw_text
         return verdict
 
     logger.warning(
@@ -210,6 +235,7 @@ def _build_single_user_prompt(patient_profile_text: str, criterion: TrialCriteri
     return (
         f"Patient profile:\n{patient_profile_text}\n\n"
         f"Criterion type: {criterion.criterion_type}\n"
+        f"Criterion index: {criterion.criterion_index}\n"
         f"Criterion text: {criterion.raw_text}"
     )
 
@@ -221,9 +247,10 @@ def _parse_single(raw_text: str, criterion: TrialCriterion) -> CriterionVerdict:
         nct_id=criterion.nct_id,
         criterion_type=criterion.criterion_type,
         criterion_index=criterion.criterion_index,
-        verdict=data["verdict"],
-        rationale=data["rationale"],
-        cited_text=data["cited_text"],
+        verdict=_normalize_verdict_str(data.get("verdict") or data.get("status")),
+        rationale=data.get("rationale") or data.get("reasoning") or "",
+        cited_text=data.get("cited_text") or criterion.raw_text,
+        evidence_quote=data.get("evidence_quote"),
     )
     return _validate_citation(verdict, criterion)
 
@@ -248,7 +275,7 @@ async def verify_criterion(
             completion = await llm.complete(
                 system_prompt=SINGLE_SYSTEM_PROMPT,
                 user_prompt=user_prompt if attempt == 0 else user_prompt + "\n\nReminder: respond with ONLY the JSON object described above.",
-                max_tokens=300,
+                max_tokens=800,
                 temperature=0.0,
             )
         except LLMProviderError as exc:
@@ -342,9 +369,10 @@ async def verify_trial_criteria(
                     nct_id=criterion.nct_id,
                     criterion_type=criterion.criterion_type,
                     criterion_index=criterion.criterion_index,
-                    verdict=item["verdict"],
-                    rationale=item["rationale"],
-                    cited_text=item["cited_text"],
+                    verdict=_normalize_verdict_str(item.get("verdict") or item.get("status")),
+                    rationale=item.get("rationale") or item.get("reasoning") or "",
+                    cited_text=item.get("cited_text") or criterion.raw_text,
+                    evidence_quote=item.get("evidence_quote"),
                 )
                 parsed_by_key[key] = _validate_citation(verdict, criterion)
             except (KeyError, TypeError, ValidationError) as exc:

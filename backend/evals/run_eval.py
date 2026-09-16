@@ -120,6 +120,7 @@ async def evaluate_case(
             continue
 
         predicted_verdicts = await verify_all_criteria(case.patient_profile, parsed_criteria, llm=llm)
+        await asyncio.sleep(4.0)  # Rate-limit pacing
         predicted_by_key = {(v.criterion_type, v.criterion_index): v for v in predicted_verdicts}
 
         for gold_criterion in gold_criteria:
@@ -199,6 +200,18 @@ async def run(skip_retrieval: bool, persist: bool) -> dict:
                 "warning_count": len(r["warnings"]),
             }
             for r in per_case_results
+        ],
+        "comparisons": [
+            {
+                "nct_id": c.nct_id,
+                "criterion_type": c.criterion_type,
+                "criterion_index": c.criterion_index,
+                "predicted": c.predicted_verdict,
+                "expected": c.expected_verdict,
+                "cited_text": c.cited_text,
+                "criterion": c.criterion_raw_text,
+            }
+            for c in all_comparisons
         ],
     }
 

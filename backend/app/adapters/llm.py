@@ -19,6 +19,7 @@ Supported providers: "anthropic", "gemini", and "groq". Set LLM_PROVIDER in .env
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -313,6 +314,9 @@ class LLMAdapter:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
+
+        # Rate pacing for Groq's rolling 8,000 TPM limit
+        await asyncio.sleep(2.8)
 
         try:
             response = await self._client.chat.completions.create(

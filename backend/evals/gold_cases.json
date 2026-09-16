@@ -64,6 +64,189 @@
           "rationale": "Patient profile explicitly states no distant metastasis."
         }
       ]
+    },
+    {
+      "gold_case_id": "case_002_knee_osteoarthritis_unbulleted",
+      "patient_profile": "56-year-old male diagnosed with osteoarthritis of the knee. He completed 8 months of physical therapy last year with minimal pain relief.",
+      "expected_trial_nct_ids": [
+        "NCT02514395"
+      ],
+      "criteria": [
+        {
+          "nct_id": "NCT02514395",
+          "criterion_type": "inclusion",
+          "raw_text": "Subjects who were diagnosed for osteoarthritis of knee",
+          "expected_verdict": "match",
+          "rationale": "Patient is diagnosed with osteoarthritis of the knee."
+        },
+        {
+          "nct_id": "NCT02514395",
+          "criterion_type": "inclusion",
+          "raw_text": "who have not undergone any physical therapy treatment previously were considered eligible.",
+          "expected_verdict": "no_match",
+          "rationale": "Patient explicitly completed 8 months of prior physical therapy."
+        }
+      ]
+    },
+    {
+      "gold_case_id": "case_003_nsclc_kras_g12c",
+      "patient_profile": "58-year-old male diagnosed with metastatic non-small cell lung adenocarcinoma. Molecular testing confirms KRAS G12C mutation positive, PD-L1 TPS is 65%. Brain MRI reveals no evidence of brain metastases. Patient has received no prior systemic therapy for metastatic disease.",
+      "expected_trial_nct_ids": [
+        "NCT04613596"
+      ],
+      "criteria": [
+        {
+          "nct_id": "NCT04613596",
+          "criterion_type": "inclusion",
+          "raw_text": "Phase 2: Histologically confirmed diagnosis of unresectable or metastatic NSCLC with KRAS G12C mutation and any PD-L1 TPS",
+          "expected_verdict": "match",
+          "rationale": "Patient has metastatic NSCLC with KRAS G12C mutation."
+        },
+        {
+          "nct_id": "NCT04613596",
+          "criterion_type": "inclusion",
+          "raw_text": "Phase 3: Histologically confirmed diagnosis of unresectable or metastatic squamous or nonsquamous NSCLC with KRAS G12C mutation and PD-L1 TPS\\>=50%",
+          "expected_verdict": "match",
+          "rationale": "Patient has adenocarcinoma with KRAS G12C and PD-L1 TPS 65%, which satisfies >= 50%."
+        },
+        {
+          "nct_id": "NCT04613596",
+          "criterion_type": "inclusion",
+          "raw_text": "Phase 3: Presence of measurable disease per RECIST1.1",
+          "expected_verdict": "unclear",
+          "rationale": "Profile does not state whether measurable target lesions meet RECIST 1.1."
+        },
+        {
+          "nct_id": "NCT04613596",
+          "criterion_type": "inclusion",
+          "raw_text": "No evidence of brain metastases",
+          "expected_verdict": "match",
+          "rationale": "Brain MRI explicitly confirms no evidence of brain metastases."
+        },
+        {
+          "nct_id": "NCT04613596",
+          "criterion_type": "exclusion",
+          "raw_text": "Phase 2 and Phase 3: Prior systemic treatment for locally advanced or metastatic NSCLC including chemotherapy, immune checkpoint inhibitor therapy, or a therapy targeting KRAS G12C mutation (e.g., AMG 510).",
+          "expected_verdict": "no_match",
+          "rationale": "Patient has received no prior systemic therapy, so exclusion does not apply."
+        },
+        {
+          "nct_id": "NCT04613596",
+          "criterion_type": "exclusion",
+          "raw_text": "Phase 2: Active brain metastases",
+          "expected_verdict": "no_match",
+          "rationale": "Patient has no brain metastases."
+        }
+      ]
+    },
+    {
+      "gold_case_id": "case_004_tnbc_washout_ejection_fraction",
+      "patient_profile": "54-year-old female diagnosed with metastatic triple-negative breast cancer (ER-negative, PgR-negative, HER2-negative) with documented disease progression after 4 prior lines of systemic therapy. Echocardiogram demonstrates normal cardiac function with a baseline left ventricular ejection fraction of 58%, and she has no history of anthracycline use. Brain MRI confirms absence of brain or leptomeningeal metastases. Her last major abdominal surgery was performed 6 months ago.",
+      "expected_trial_nct_ids": [
+        "NCT03719326"
+      ],
+      "criteria": [
+        {
+          "nct_id": "NCT03719326",
+          "criterion_type": "inclusion",
+          "raw_text": "Female participants, 18 years or older",
+          "expected_verdict": "match",
+          "rationale": "Patient is a 54-year-old female."
+        },
+        {
+          "nct_id": "NCT03719326",
+          "criterion_type": "inclusion",
+          "raw_text": "Performance status 0 or 1",
+          "expected_verdict": "unclear",
+          "rationale": "Performance status is not documented in the patient profile."
+        },
+        {
+          "nct_id": "NCT03719326",
+          "criterion_type": "inclusion",
+          "raw_text": "Locally advanced or metastatic triple negative breast cancer (ER-negative, PgR-negative, and HER2-negative according to ASCO/CAP guidelines)",
+          "expected_verdict": "match",
+          "rationale": "Patient has confirmed metastatic triple negative breast cancer."
+        },
+        {
+          "nct_id": "NCT03719326",
+          "criterion_type": "inclusion",
+          "raw_text": "Disease progression after no more than 3 prior lines of therapy",
+          "expected_verdict": "no_match",
+          "rationale": "Patient has received 4 prior lines of therapy, which violates the <=3 limit."
+        },
+        {
+          "nct_id": "NCT03719326",
+          "criterion_type": "exclusion",
+          "raw_text": "Presence of metastases in the brain or cancer spreading into the cerebrospinal fluid - CSF (leptomeningeal disease)",
+          "expected_verdict": "no_match",
+          "rationale": "Patient has no brain or leptomeningeal metastases."
+        },
+        {
+          "nct_id": "NCT03719326",
+          "criterion_type": "exclusion",
+          "raw_text": "Major surgery within 4 weeks prior to first study treatment",
+          "expected_verdict": "no_match",
+          "rationale": "Surgery was 6 months ago, outside the 4-week exclusion window."
+        },
+        {
+          "nct_id": "NCT03719326",
+          "criterion_type": "exclusion",
+          "raw_text": "Participants who have previously received maximum cumulative lifetime anthracycline dosage or baseline ejection fraction \\<50% (on heart echography)",
+          "expected_verdict": "no_match",
+          "rationale": "Patient has LVEF 58% and no prior anthracycline exposure."
+        }
+      ]
+    },
+    {
+      "gold_case_id": "case_005_heart_failure_reduced_ef",
+      "patient_profile": "67-year-old male with chronic systolic heart failure, NYHA class III. Echocardiogram demonstrates a severely reduced LVEF of 28%. Baseline NT-proBNP is 1450 pg/mL with no history or findings of atrial fibrillation. Blood pressure is stable at 124/78 mmHg. Patient has no history of myocardial infarction, stroke, or major cardiovascular surgery.",
+      "expected_trial_nct_ids": [
+        "NCT03057977"
+      ],
+      "criteria": [
+        {
+          "nct_id": "NCT03057977",
+          "criterion_type": "inclusion",
+          "raw_text": "Male or female patient age \\>= 18 years at screening. For Japan only: Age \\>= 20 years at screening",
+          "expected_verdict": "match",
+          "rationale": "Patient is a 67-year-old male."
+        },
+        {
+          "nct_id": "NCT03057977",
+          "criterion_type": "inclusion",
+          "raw_text": "Patients with chronic HF (Chronic Heart Failure) NYHA (New York Heart Association Classification) class II-IV and reduced EF (Ejection Fraction) (LVEF (Left Ventricular Ejection Fraction) \\<=40%) and elevated NT-proBNP (N-terminal of the prohormone brain natriuretic peptide)",
+          "expected_verdict": "match",
+          "rationale": "Patient has NYHA III, LVEF 28% (<=40%), and elevated NT-proBNP."
+        },
+        {
+          "nct_id": "NCT03057977",
+          "criterion_type": "inclusion",
+          "raw_text": "If EF\\<= 30%: NT-proBNP \\>= 600 pg/ml for patients without AF and NT-proBNP \\>=1200 pg/ml for patients with AF",
+          "expected_verdict": "match",
+          "rationale": "Patient EF is 28% (<=30%), has no AF, and NT-proBNP is 1450 pg/mL (>=600 pg/mL)."
+        },
+        {
+          "nct_id": "NCT03057977",
+          "criterion_type": "inclusion",
+          "raw_text": "Signed and dated written ICF (Informed Consent Form)",
+          "expected_verdict": "unclear",
+          "rationale": "Written informed consent status is not documented in the patient profile."
+        },
+        {
+          "nct_id": "NCT03057977",
+          "criterion_type": "exclusion",
+          "raw_text": "Myocardial infarction, coronary artery bypass graft surgery, or other major cardiovascular surgery, stroke or TIA (Transient Ischaemic Attack) in past 90 days prior to Visit 1",
+          "expected_verdict": "no_match",
+          "rationale": "Patient has no history of MI, stroke, or CV surgery."
+        },
+        {
+          "nct_id": "NCT03057977",
+          "criterion_type": "exclusion",
+          "raw_text": "Symptomatic hypotension and/or a SBP \\< 100 mmHg",
+          "expected_verdict": "no_match",
+          "rationale": "Patient blood pressure is 124/78 mmHg with no hypotension."
+        }
+      ]
     }
   ]
 }
