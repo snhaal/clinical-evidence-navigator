@@ -110,11 +110,11 @@ Rules:
 """
 
 
+CHUNK_SIZE = 5
 _BATCH_TOKENS_PER_CRITERION = 180  # Each JSON item is ~100-140 tokens with evidence_quote; 180 balances detail with token ceiling
 _BATCH_TOKENS_FLOOR = 600
-_BATCH_TOKENS_CEILING = (
-    2200  # Stays safely under Groq's 8,000 TPM in-flight reservation ceiling
-)
+_BATCH_TOKENS_CEILING = 1500  # 5 criteria * 180 tokens = ~900 tokens, well under 1,500; prevents Groq TPM reservation 429
+
 
 
 def _batch_max_output_tokens(num_criteria: int, attempt: int) -> int:
@@ -355,18 +355,15 @@ def _build_batch_user_prompt(
     return "\n".join(lines)
 
 
-async def verify_trial_criteria(
+async def _verify_chunk(
     patient_profile_text: str,
     criteria: list[TrialCriterion],
     llm: LLMAdapter | None = None,
 ) -> list[CriterionVerdict]:
     """
-    Judges every criterion for ONE trial in a single LLM call. This is
-    what makes the pipeline viable on a low-RPM free tier: one call per
-    trial instead of one call per criterion. Any criterion the batch
-    response is missing, or gets wrong in a way that fails parsing, is
-    repaired with an individual verify_criterion() call rather than
-    marked unclear outright — so quality degrades gracefully, not en masse.
+    Judges a single chunk of criteria (at most CHUNK_SIZE criteria) in one LLM call.
+    Any criterion the batch response is missing, or gets wrong in a way that fails parsing,
+    is repaired with an individual verify_criterion() call.
     """
     if not criteria:
         return []
@@ -396,8 +393,9 @@ async def verify_trial_criteria(
         except LLMProviderError as exc:
             last_error = f"provider error: {exc}"
             logger.error(
-                "Batched verify call failed for %s (attempt %d): %s",
+                "Batched verify call failed for %s chunk (%d criteria, attempt %d): %s",
                 criteria[0].nct_id,
+                len(criteria),
                 attempt,
                 exc,
             )
@@ -411,8 +409,9 @@ async def verify_trial_criteria(
         except (json.JSONDecodeError, ValueError) as exc:
             last_error = f"malformed batch response: {exc}"
             logger.warning(
-                "Batched verify parse failure for %s (attempt %d): %s",
+                "Batched verify parse failure for %s chunk (%d criteria, attempt %d): %s",
                 criteria[0].nct_id,
+                len(criteria),
                 attempt,
                 exc,
             )
@@ -452,17 +451,16 @@ async def verify_trial_criteria(
                 )
                 continue
 
-        break  # Got a usable (if partial) response — stop retrying the whole batch.
+        break  # Got a usable (if partial) response — stop retrying this chunk.
 
-    # Repair anything the batch didn't cover: individually, not en masse,
-    # so a partially-good batch response doesn't get thrown away.
+    # Repair anything the chunk didn't cover: individually, not en masse,
+    # so a partially-good chunk response doesn't get thrown away.
     missing = [c for key, c in criteria_by_key.items() if key not in parsed_by_key]
     if missing and len(missing) == len(criteria) and last_error:
-        # The WHOLE batch failed (provider error or unparseable both attempts) —
-        # fall back to unclear for all of them rather than spending N more
-        # individual calls we already have reason to believe will also fail.
+        # The WHOLE chunk failed (provider error or unparseable both attempts) —
+        # fall back to unclear for all of them.
         logger.error(
-            "Entire batch failed for %s (%s); marking all %d criteria unclear.",
+            "Entire chunk failed for %s (%s); marking all %d criteria in chunk unclear.",
             criteria[0].nct_id,
             last_error,
             len(missing),
@@ -482,8 +480,56 @@ async def verify_trial_criteria(
             repaired = await verify_criterion(patient_profile_text, c, llm=llm)
             parsed_by_key[(c.criterion_type, c.criterion_index)] = repaired
 
-    # Return in the same order the criteria were given.
+    # Return in the same order the criteria were given in this chunk.
     return [parsed_by_key[(c.criterion_type, c.criterion_index)] for c in criteria]
+
+
+async def verify_trial_criteria(
+    patient_profile_text: str,
+    criteria: list[TrialCriterion],
+    llm: LLMAdapter | None = None,
+) -> list[CriterionVerdict]:
+    """
+    Judges eligibility criteria for ONE trial in sequential chunks of at most
+    CHUNK_SIZE (5) criteria per LLM call.
+
+    Slicing criteria into chunks of 5 prevents output truncation ("Unterminated string")
+    and Groq json_validate_failed errors on trials with many criteria (e.g. 15-20 criteria),
+    while minimizing batch omission repairs and respecting rate limits.
+    """
+    if not criteria:
+        return []
+
+    llm = llm or LLMAdapter()
+    criteria_chunks = [
+        criteria[i : i + CHUNK_SIZE] for i in range(0, len(criteria), CHUNK_SIZE)
+    ]
+
+    if len(criteria_chunks) > 1:
+        logger.info(
+            "Verifying %d criteria for %s across %d chunks (chunk size %d).",
+            len(criteria),
+            criteria[0].nct_id,
+            len(criteria_chunks),
+            CHUNK_SIZE,
+        )
+
+    all_verdicts: list[CriterionVerdict] = []
+    for idx, chunk in enumerate(criteria_chunks):
+        if idx > 0:
+            await asyncio.sleep(2.0)
+        chunk_verdicts = await _verify_chunk(
+            patient_profile_text=patient_profile_text,
+            criteria=chunk,
+            llm=llm,
+        )
+        all_verdicts.extend(chunk_verdicts)
+
+    return all_verdicts
+
+
+# Alias for backward compatibility / caller clarity
+verify_study_eligibility = verify_trial_criteria
 
 
 async def verify_all_criteria(
@@ -493,8 +539,8 @@ async def verify_all_criteria(
 ) -> list[CriterionVerdict]:
     """
     Public entry point — unchanged signature so callers (app/api/routes.py,
-    evals/run_eval.py) don't need to change. Internally now batches all of
-    one trial's criteria into a single call via verify_trial_criteria,
-    instead of one concurrent call per criterion.
+    evals/run_eval.py) don't need to change. Internally verifies criteria in
+    chunks of at most CHUNK_SIZE (5) via verify_trial_criteria.
     """
     return await verify_trial_criteria(patient_profile_text, criteria, llm=llm)
+

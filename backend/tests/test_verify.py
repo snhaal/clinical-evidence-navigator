@@ -348,12 +348,75 @@ def test_batch_max_output_tokens_respects_floor():
 def test_batch_max_output_tokens_respects_ceiling():
     from app.pipeline.verify import _batch_max_output_tokens
 
-    assert _batch_max_output_tokens(1000, attempt=0) <= 8000
+    assert _batch_max_output_tokens(1000, attempt=0) <= 1500
 
 
 def test_batch_max_output_tokens_retry_gets_more_room_than_first_attempt():
     from app.pipeline.verify import _batch_max_output_tokens
 
-    first = _batch_max_output_tokens(10, attempt=0)
-    retry = _batch_max_output_tokens(10, attempt=1)
+    first = _batch_max_output_tokens(5, attempt=0)
+    retry = _batch_max_output_tokens(5, attempt=1)
     assert retry > first
+
+
+@pytest.mark.asyncio
+async def test_batch_chunks_criteria_into_groups_of_five(monkeypatch):
+    """Criteria count > 5 is chunked into sequential batches of at most 5."""
+    sleep_calls = []
+
+    async def fake_sleep(duration):
+        sleep_calls.append(duration)
+
+    monkeypatch.setattr("app.pipeline.verify.asyncio.sleep", fake_sleep)
+
+    criteria = [make_criterion(f"Criterion {i}", index=i) for i in range(12)]
+    # 12 criteria -> 3 chunks: [0..4], [5..9], [10..11]
+    chunk_1 = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": i,
+                "verdict": "match",
+                "rationale": "ok",
+                "cited_text": f"Criterion {i}",
+            }
+            for i in range(5)
+        ]
+    )
+    chunk_2 = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": i,
+                "verdict": "no_match",
+                "rationale": "ok",
+                "cited_text": f"Criterion {i}",
+            }
+            for i in range(5, 10)
+        ]
+    )
+    chunk_3 = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": i,
+                "verdict": "unclear",
+                "rationale": "ok",
+                "cited_text": f"Criterion {i}",
+            }
+            for i in range(10, 12)
+        ]
+    )
+    llm = FakeLLM(responses=[chunk_1, chunk_2, chunk_3])
+
+    verdicts = await verify_all_criteria("some profile", criteria, llm=llm)
+
+    assert len(llm.calls) == 3
+    assert len(verdicts) == 12
+    assert [v.criterion_index for v in verdicts] == list(range(12))
+    assert [v.verdict for v in verdicts[:5]] == ["match"] * 5
+    assert [v.verdict for v in verdicts[5:10]] == ["no_match"] * 5
+    assert [v.verdict for v in verdicts[10:12]] == ["unclear"] * 2
+    # 2 sleep calls of 2.0s between the 3 chunks
+    assert sleep_calls == [2.0, 2.0]
+
