@@ -25,6 +25,7 @@ match/no_match. This is what makes "100% citation validity" an enforced
 property of the code, not an aspiration.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -477,6 +478,7 @@ async def verify_trial_criteria(
                 c.nct_id,
                 c.criterion_index,
             )
+            await asyncio.sleep(3.0)
             repaired = await verify_criterion(patient_profile_text, c, llm=llm)
             parsed_by_key[(c.criterion_type, c.criterion_index)] = repaired
 

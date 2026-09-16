@@ -127,8 +127,8 @@ class LLMAdapter:
     """
 
     _MAX_RATE_LIMIT_RETRIES = 3
-    _BACKOFF_INITIAL_SECONDS = 3.0
-    _BACKOFF_MAX_SECONDS = 30.0
+    _BACKOFF_INITIAL_SECONDS = 8.0
+    _BACKOFF_MAX_SECONDS = 32.0
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -336,7 +336,7 @@ class LLMAdapter:
         ]
 
         # Rate pacing for Groq's rolling 8,000 TPM limit
-        await asyncio.sleep(2.8)
+        await asyncio.sleep(3.0)
 
         try:
             response = await self._client.chat.completions.create(
@@ -407,6 +407,9 @@ class LLMAdapter:
         just the same one Anthropic already lives with.
         """
         from openai import APIError, APITimeoutError, RateLimitError
+
+        # Rate pacing for Groq's rolling 8,000 TPM limit
+        await asyncio.sleep(3.0)
 
         try:
             response = await self._client.chat.completions.create(
