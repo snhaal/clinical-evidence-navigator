@@ -131,3 +131,50 @@ async def test_retrieve_candidate_trials_raises_act_stage_error_on_api_failure()
         await retrieve_candidate_trials(
             StructuredQuery(condition="lung cancer"), client=client
         )
+
+
+def test_extract_root_condition():
+    from app.adapters.clinicaltrials import ClinicalTrialsClient
+
+    assert (
+        ClinicalTrialsClient._extract_root_condition(
+            "stage III thoracic esophageal squamous cell carcinoma ypT2N1M0"
+        )
+        == "thoracic esophageal squamous"
+    )
+    assert (
+        ClinicalTrialsClient._extract_root_condition("lung adenocarcinoma")
+        == "lung adenocarcinoma"
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_studies_auto_relaxes_query_on_zero_results(monkeypatch):
+    from app.adapters.clinicaltrials import ClinicalTrialsClient
+
+    client = ClinicalTrialsClient()
+    calls = []
+
+    async def fake_fetch(params):
+        calls.append(params)
+        # First call with query.term returns 0 studies
+        if "query.term" in params:
+            return []
+        # Relaxed call returns 1 study
+        return [SAMPLE_STUDY]
+
+    monkeypatch.setattr(client, "_fetch_studies", fake_fetch)
+
+    studies = await client.search_studies(
+        {
+            "query.cond": "thoracic esophageal squamous cell carcinoma",
+            "query.term": "Stage III ypT2N1M0 esophagectomy",
+            "filter.overallStatus": "RECRUITING",
+        }
+    )
+
+    assert len(studies) == 1
+    assert len(calls) == 2
+    # The second call dropped query.term
+    assert "query.term" not in calls[1]
+    assert calls[1]["query.cond"] == "thoracic esophageal squamous cell carcinoma"

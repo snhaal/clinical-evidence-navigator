@@ -9,6 +9,7 @@ both live elsewhere — see the risk-management note in the project plan:
 """
 
 import logging
+import re
 
 import httpx
 
@@ -28,22 +29,34 @@ class ClinicalTrialsClient:
         self._timeout = settings.request_timeout_seconds
         self._max_results = settings.max_trials_per_query
 
-    async def search_studies(self, query_params: dict) -> list[dict]:
+    @staticmethod
+    def _extract_root_condition(condition: str) -> str:
         """
-        Query the /studies endpoint.
-
-        query_params example:
-            {
-                "query.cond": "esophageal squamous cell carcinoma",
-                "filter.overallStatus": "RECRUITING",
-            }
-
-        Returns a list of raw study JSON objects (capped at max_trials_per_query).
-        Raises ClinicalTrialsAPIError on failure — callers must show a visible
-        error state, never a silent empty result (NFR: Reliability).
+        Extracts the primary disease / cancer entity or first 2-3 words,
+        stripping staging notation, pathology descriptors, and surgical procedures.
         """
-        params = {**query_params, "pageSize": self._max_results, "format": "json"}
+        # Strip staging notation (e.g., Stage III, AJCC, ypT2N1M0, T2N1M0)
+        cleaned = re.sub(
+            r"\b(stage\s+[ivx\d]+[a-c]?|ajcc(\s+\d+th(\s+edition)?)?|tnm|yp?[t][0-4][a-c]?|yp?[n][0-3][a-c]?|yp?[m][0-1][a-c]?|ecog\s+\d)\b",
+            "",
+            condition,
+            flags=re.IGNORECASE,
+        )
+        # Strip procedure, pathology, and therapy keywords
+        cleaned = re.sub(
+            r"\b(resected|resection|esophagectomy|lobectomy|surgery|post-?op(erative)?|pre-?treatment|neoadjuvant|adjuvant|chemoradiotherapy|chemotherapy|radiotherapy|radical|histologically\s+confirmed)\b",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"[^\w\s\-]", " ", cleaned)
+        words = cleaned.split()
+        if not words:
+            orig_words = condition.split()
+            return " ".join(orig_words[:3]) if orig_words else condition.strip()
+        return " ".join(words[:3])
 
+    async def _fetch_studies(self, params: dict) -> list[dict]:
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.get(f"{self._base_url}/studies", params=params)
@@ -65,12 +78,71 @@ class ClinicalTrialsClient:
 
         try:
             payload = response.json()
-            studies = payload.get("studies", [])
+            return payload.get("studies", [])
         except (ValueError, KeyError) as exc:
             logger.error("Malformed ClinicalTrials.gov response: %s", exc)
             raise ClinicalTrialsAPIError(
                 "Received an unexpected response shape from ClinicalTrials.gov."
             ) from exc
+
+    async def search_studies(self, query_params: dict) -> list[dict]:
+        """
+        Query the /studies endpoint.
+
+        query_params example:
+            {
+                "query.cond": "esophageal squamous cell carcinoma",
+                "filter.overallStatus": "RECRUITING",
+            }
+
+        Returns a list of raw study JSON objects (capped at max_trials_per_query).
+        Raises ClinicalTrialsAPIError on failure — callers must show a visible
+        error state, never a silent empty result (NFR: Reliability).
+        """
+        params = {**query_params, "pageSize": self._max_results, "format": "json"}
+        studies = await self._fetch_studies(params)
+
+        # Automatic query relaxation fallback:
+        # If the initial request returns 0 candidate studies, do not immediately return empty results.
+        # Automatically trigger a fallback search using only the primary condition/cancer entity
+        # (or the first 2-3 words of the condition).
+        if not studies and ("query.cond" in query_params or "query.term" in query_params):
+            logger.info("Initial search returned 0 trials; auto-relaxing query to root condition.")
+            cond = query_params.get("query.cond", "")
+            root_cond = self._extract_root_condition(cond) if cond else ""
+            status_filter = query_params.get("filter.overallStatus", "RECRUITING")
+
+            # Fallback 1: search with only query.cond if query.term was present
+            if cond and "query.term" in query_params:
+                relaxed_params = {
+                    "query.cond": cond,
+                    "filter.overallStatus": status_filter,
+                    "pageSize": self._max_results,
+                    "format": "json",
+                }
+                studies = await self._fetch_studies(relaxed_params)
+
+            # Fallback 2: search with root condition / first 2-3 words if still 0
+            if not studies and root_cond and root_cond != cond:
+                relaxed_params = {
+                    "query.cond": root_cond,
+                    "filter.overallStatus": status_filter,
+                    "pageSize": self._max_results,
+                    "format": "json",
+                }
+                studies = await self._fetch_studies(relaxed_params)
+
+            # Fallback 3: if condition was empty but term was present, search using root entity from term
+            if not studies and not cond and "query.term" in query_params:
+                term_cond = self._extract_root_condition(query_params["query.term"])
+                if term_cond:
+                    relaxed_params = {
+                        "query.cond": term_cond,
+                        "filter.overallStatus": status_filter,
+                        "pageSize": self._max_results,
+                        "format": "json",
+                    }
+                    studies = await self._fetch_studies(relaxed_params)
 
         return studies
 

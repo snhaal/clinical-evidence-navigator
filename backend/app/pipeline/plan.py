@@ -56,6 +56,8 @@ Rules:
 - Only ask a clarifying question if the CONDITION itself is missing or too vague to search on. Missing stage, prior therapy, or biomarkers is fine — leave those null/empty rather than asking.
 - exclusions should list patient-stated comorbidities or exclusion-relevant facts (e.g. "prior immunotherapy", "distant metastasis"), not general commentary.
 - status_filter defaults to "RECRUITING" unless the profile implies otherwise.
+- SEARCH QUERY RULE: For ClinicalTrials.gov search terms, extract ONLY the primary disease / condition name (e.g., 'esophageal squamous cell carcinoma' or 'lung adenocarcinoma').
+- DO NOT include staging notation (TNM, AJCC, Stage III), specific pathology descriptors (ypT2N1M0), lab thresholds, or surgical procedures in the search query keywords. Those are evaluated during verification, not retrieval.
 """
 
 
