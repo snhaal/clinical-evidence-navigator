@@ -342,7 +342,7 @@ def test_batch_max_output_tokens_scales_with_criteria_count():
 def test_batch_max_output_tokens_respects_floor():
     from app.pipeline.verify import _batch_max_output_tokens
 
-    assert _batch_max_output_tokens(1, attempt=0) >= 800
+    assert _batch_max_output_tokens(1, attempt=0) >= 600
 
 
 def test_batch_max_output_tokens_respects_ceiling():

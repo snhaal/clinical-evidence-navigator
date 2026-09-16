@@ -10,6 +10,7 @@ empty result. Every stage-specific exception is caught here and mapped to
 an HTTP status with a message that says what actually failed.
 """
 
+import asyncio
 import logging
 import time
 
@@ -112,6 +113,9 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
         )
 
     # --- Ground + Verify per trial ----------------------------------------
+    # Cooldown pause to allow Groq rolling TPM window to slide down after Plan stage
+    await asyncio.sleep(4.0)
+
     verdicts_by_nct_id: dict = {}
     criterion_ids_by_nct_id: dict = {}
     trial_stats: dict = {}  # nct_id -> {"latency_ms": int, "token_cost": int}

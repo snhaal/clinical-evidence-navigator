@@ -111,9 +111,9 @@ Rules:
 
 
 _BATCH_TOKENS_PER_CRITERION = 220  # Each JSON item is ~100-140 tokens with evidence_quote; 220 gives ample headroom
-_BATCH_TOKENS_FLOOR = 800
+_BATCH_TOKENS_FLOOR = 600
 _BATCH_TOKENS_CEILING = (
-    4800  # Stays safely under Groq's 8,000 TPM in-flight reservation ceiling
+    2400  # Stays safely under Groq's 8,000 TPM in-flight reservation ceiling
 )
 
 
