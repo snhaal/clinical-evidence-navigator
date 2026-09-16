@@ -116,9 +116,9 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
     # Cooldown pause to allow Groq rolling TPM window to slide down after Plan stage
     await asyncio.sleep(4.0)
 
-    # For live match verification, evaluate the top 1 candidate study to stay
+    # For live match verification, evaluate the top 3 candidate studies to stay
     # comfortably within Groq's rolling 8,000 TPM limit
-    candidate_trials = trials[:1]
+    candidate_trials = trials[:3]
 
     verdicts_by_nct_id: dict = {}
     criterion_ids_by_nct_id: dict = {}
@@ -126,8 +126,9 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
 
     for idx, trial in enumerate(candidate_trials):
         if idx > 0:
-            # Enforce cooldown between candidate study verifications to allow rolling token window to clear
-            await asyncio.sleep(4.0)
+            # Enforce 2.0s cooldown between candidate study verifications to allow rolling token window to clear
+            await asyncio.sleep(2.0)
+
 
         async with engine.begin() as conn:
             await upsert_trial(conn, trial)
