@@ -5,9 +5,9 @@
 [![CI](https://github.com/snhaal/clinical-evidence-navigator/actions/workflows/ci.yml/badge.svg)](https://github.com/snhaal/clinical-evidence-navigator/actions/workflows/ci.yml)
 [![Live Demo](https://img.shields.io/badge/demo-online-brightgreen.svg)](https://clinical-evidence-navigator.vercel.app)
 [![API Status](https://img.shields.io/badge/api-active-blue.svg)](https://clinical-evidence-backend-s8vv.onrender.com/health)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Live Web Application:** [https://clinical-evidence-navigator.vercel.app](https://clinical-evidence-navigator.vercel.app)  
+**Live Web Application:** [https://clinical-evidence-navigator.vercel.app](https://clinical-evidence-navigator.vercel.app)
 **Production API:** [https://clinical-evidence-backend-s8vv.onrender.com](https://clinical-evidence-backend-s8vv.onrender.com)
 
 ---
@@ -25,58 +25,48 @@ Matching cancer patients to clinical trials is traditionally a manual, labor-int
 The system decouples **retrieval query planning** from **deep criterion-level verification**, guaranteeing high recall during discovery and strict factual accuracy during evaluation.
 
 ```
-+----------------------------------------------------------------------------------------------------+
-|                                    Unstructured Clinical Note                                      |
-|    (Dense EHR text: pathology staging ypT2N1M0, prior resection, systemic therapies, ECOG PS 1)   |
-+----------------------------------------------------------------------------------------------------+
-                                                  │
-                                                  ▼
-+----------------------------------------------------------------------------------------------------+
-|                                      Stage 1: Planner Agent                                        |
-|  • Free-text extraction to validated StructuredQuery schema (Pydantic v2)                          |
-|  • MeSH entity normalization (e.g. "esophageal squamous cell carcinoma")                           |
-|  • Staging & surgical sanitization: strips TNM notation, margin status, lab values from query      |
-+----------------------------------------------------------------------------------------------------+
-                                                  │
-                                                  │ query.cond = "esophageal squamous cell carcinoma"
-                                                  │ filter.overallStatus = "RECRUITING"
-                                                  ▼
-+----------------------------------------------------------------------------------------------------+
-|                               ClinicalTrials.gov REST API v2                                       |
-|  • Initial retrieval of active studies (pageSize = 10, candidate evaluation slice = top 3)         |
-|  • 3-Tier Automated Query Relaxation Fallback:                                                     |
-|      1. Strict MeSH entity search                                                                  |
-|      2. Histology/organ relaxation (e.g. "esophageal squamous cell carcinoma" -> "esophageal cancer")|
-|      3. Broad anatomical condition fallback                                                        |
-+----------------------------------------------------------------------------------------------------+
-                                                  │
-                                                  ▼
-+----------------------------------------------------------------------------------------------------+
-|                                     Stage 2: Verifier Agent                                        |
-|  • Deterministic Grounding: splits protocol text into atomic, numbered, citable criteria units     |
-|  • Deep Zero-Shot Audit: evaluates up to 20 criteria per study in a single structured JSON pass    |
-|  • Clinical Domain Equivalence Axioms:                                                             |
-|      - Histology satisfies pathological confirmation requirement                                   |
-|      - Staging notation subsumption (Stage III satisfies Stage II-III / locally advanced)         |
-|      - Absent distant metastasis satisfies M0 requirement                                          |
-|  • Temporal Grounding: runtime UTC date injection for washout & interval reasoning                 |
-|  • Fail-Fast Short-Circuit: immediate termination on hard exclusion                                |
-+----------------------------------------------------------------------------------------------------+
-                                                  │
-                                                  ▼
-+----------------------------------------------------------------------------------------------------+
-|                                  Next.js Frontend Dashboard                                        |
-|  • Ranked trial shortlist categorized by match tier (Eligible, Unclear, Ineligible)               |
-|  • Interactive criteria breakdown: verdict, clinical rationale, and verbatim evidence citations    |
-|  • Transparent clinical abstention ("unclear") on undocumented parameters (0% false inclusions)     |
-+----------------------------------------------------------------------------------------------------+
+                              Unstructured Clinical Note
+     (Dense EHR text: pathology staging ypT2N1M0, prior resection, systemic therapies, ECOG PS 1)
+                                        │
+                                        ▼
+                              Stage 1: Planner Agent
+   • Free-text extraction to validated StructuredQuery schema (Pydantic v2)
+   • MeSH entity normalization (e.g. "esophageal squamous cell carcinoma")
+   • Staging & surgical sanitization: strips TNM notation, margin status, lab values from query
+                                        │
+                                        │ query.cond = "esophageal squamous cell carcinoma"
+                                        │ filter.overallStatus = "RECRUITING"
+                                        ▼
+                           ClinicalTrials.gov REST API v2
+   • Initial retrieval of active studies (pageSize = 10, candidate evaluation slice = top 3)
+   • 3-Tier Automated Query Relaxation Fallback:
+       1. Strict MeSH entity search
+       2. Histology/organ relaxation (e.g. "esophageal squamous cell carcinoma" -> "esophageal cancer")
+       3. Broad anatomical condition fallback
+                                        │
+                                        ▼
+                              Stage 2: Verifier Agent
+   • Deterministic Grounding: splits protocol text into atomic, numbered, citable criteria units
+   • Deep Zero-Shot Audit: evaluates up to 20 criteria per study in a single structured JSON pass
+   • Clinical Domain Equivalence Axioms:
+       - Histology satisfies pathological confirmation requirement
+       - Staging notation subsumption (Stage III satisfies Stage II-III / locally advanced)
+       - Absent distant metastasis satisfies M0 requirement
+   • Temporal Grounding: runtime UTC date injection for washout & interval reasoning
+   • Fail-Fast Short-Circuit: immediate termination on hard exclusion
+                                        │
+                                        ▼
+                            Next.js Frontend Dashboard
+   • Ranked trial shortlist categorized by match tier (Eligible, Unclear, Ineligible)
+   • Interactive criteria breakdown: verdict, clinical rationale, and verbatim evidence citations
+   • Transparent clinical abstention ("unclear") on undocumented parameters (0% false inclusions)
 ```
 
 ### Pipeline Execution Stages
 
 1. **Plan (Stage 1)**: Converts unstructured clinical narratives into a validated `StructuredQuery` schema. Normalizes conditions to standard MeSH entities while explicitly discarding staging notations (TNM, AJCC), lab thresholds, and surgical details to prevent over-constraining the search.
 2. **Act**: Queries the ClinicalTrials.gov REST API v2 with `filter.overallStatus=RECRUITING`. If the initial query returns 0 hits, the automated relaxation engine iteratively broadens the search across 3 tiers.
-3. **Ground**: Deterministically splits multi-paragraph eligibility text into numbered, polarity-tagged (inclusion vs. exclusion) criteria. Uses unit-tested regex heuristics—no non-deterministic LLM calls in the parsing loop.
+3. **Ground**: Deterministically splits multi-paragraph eligibility text into numbered, polarity-tagged (inclusion vs. exclusion) criteria. Uses unit-tested regex heuristics — no non-deterministic LLM calls in the parsing loop.
 4. **Verify (Stage 2)**: Evaluates up to 20 criteria per trial in a single batch using Gemini 3.5 Flash Lite with native JSON schema constraints (`response_mime_type="application/json"`). Grounds reasoning against today's UTC date and enforces clinical equivalence axioms.
 5. **Synthesize**: Aggregates criteria verdicts, computes match eligibility scores, verifies verbatim citation substring containment against source texts, and formats output for the UI.
 
@@ -84,10 +74,8 @@ The system decouples **retrieval query planning** from **deep criterion-level ve
 
 ## Core Failure Modes & Production Solutions
 
-Building an agentic RAG pipeline that operates reliably on public clinical trial registries requires solving specific edge cases where standard LLMs fail:
-
 ### 1. Token Starvation & Quota Ceiling
-* **Failure Mode**: Multi-paragraph trial criteria consume ~3,500 prompt tokens. When using Groq (`openai/gpt-oss-120b`), an output reservation ceiling of 4,800 tokens exceeded Groq’s 8,000 TPM limit (`prompt + max_tokens > 8000`), triggering immediate HTTP 429 rejections before inference began. Concurrently, Gemini 2.5 Flash free tier enforced an unworkable 20 Requests Per Day (RPD) quota, locking out testing after 4–5 searches.
+* **Failure Mode**: Multi-paragraph trial criteria consume ~3,500 prompt tokens. When using Groq (`openai/gpt-oss-120b`), an output reservation ceiling of 4,800 tokens exceeded Groq's 8,000 TPM limit (`prompt + max_tokens > 8000`), triggering immediate HTTP 429 rejections before inference began. Concurrently, Gemini 2.5 Flash free tier enforced an unworkable 20 Requests Per Day (RPD) quota, locking out testing after 4–5 searches.
 * **Production Solution**: Migrated the primary LLM adapter to `gemini-3.5-flash-lite`, which provides **250,000 TPM** and **500 RPD** on the free tier. Configured sliding-window request pacing via an in-memory rate limiter calibrated to **14 RPM**, added an explicit 2-second cooldown between consecutive trial evaluations, and implemented dynamic backoff parsing `retry-after` headers. Retained Groq with fallback plain-JSON completion as an automatic failover.
 
 ### 2. Query Over-Constraining & Zero-Result Recovery
@@ -159,12 +147,14 @@ Building an agentic RAG pipeline that operates reliably on public clinical trial
 * A free [Google AI Studio API Key](https://aistudio.google.com/) (or [Groq API Key](https://console.groq.com/))
 
 ### 1. Clone the Repository
+
 ```bash
 git clone https://github.com/snhaal/clinical-evidence-navigator.git
 cd clinical-evidence-navigator
 ```
 
 ### 2. Backend Setup
+
 ```bash
 cd backend
 
@@ -183,7 +173,8 @@ cp .env.example .env
 ```
 
 Edit `backend/.env` with your credentials:
-```env
+
+```
 LLM_PROVIDER=gemini
 LLM_MODEL=gemini-3.5-flash-lite
 GEMINI_API_KEY=your_gemini_api_key_here
@@ -195,13 +186,16 @@ REQUEST_TIMEOUT_SECONDS=60
 ```
 
 Start the backend server:
+
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
-* Interactive API Documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
-* Health Check: [http://localhost:8000/health](http://localhost:8000/health)
+
+* Interactive API Documentation: http://localhost:8000/docs
+* Health Check: http://localhost:8000/health
 
 ### 3. Frontend Setup
+
 ```bash
 cd ../frontend
 
@@ -213,22 +207,25 @@ cp .env.example .env.local
 ```
 
 Start the Next.js development server:
+
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+Open http://localhost:3000 in your browser.
 
 ### 4. Running Tests
+
 Run the offline pytest suite covering all pipeline stages, adapters, schema constraints, and rate limiters:
+
 ```bash
 cd backend
 pytest tests/ -v
 ```
-*(88 passed unit tests, running fully offline with mocked external fixtures).*
 
----
+(88 passed unit tests, running fully offline with mocked external fixtures.)
 
-## Benchmark Evaluation
+### Benchmark Evaluation
 
 The verification pipeline is evaluated against a curated suite of real-world clinical oncology cases (`backend/evals/gold_cases.json`):
 
@@ -237,27 +234,38 @@ cd backend
 python -u -m evals.run_eval --skip-retrieval
 ```
 
-* **False-Match Rate**: **0.0%** (zero dangerous false inclusions; unknown or unmentioned parameters strictly resolve to `unclear`).
-* **Citation Validity**: **100.0%** (every verdict is backed by an exact verbatim substring match from the source protocol text).
-* **Criterion Agreement**: **79.3%** (discrepancies are safe clinical abstentions on ambiguous clinical bounds).
+* **False-Match Rate**: 0.0% (zero dangerous false inclusions; unknown or unmentioned parameters strictly resolve to unclear).
+* **Citation Validity**: 100.0% (every verdict is backed by an exact verbatim substring match from the source protocol text).
+* **Criterion Agreement**: 79.3% (discrepancies are safe clinical abstentions on ambiguous clinical bounds).
 
 ---
 
 ## Roadmap & Future Improvements
 
-- [ ] **Semantic Vector Search**: Integrate pgvector embeddings for criteria-level cosine similarity to complement keyword retrieval.
-- [ ] **Cross-Trial Criterion Deduplication**: Cluster recurring baseline eligibility criteria (e.g. ECOG scores, organ function lab cutoffs) across multi-center trials to optimize LLM token usage.
-- [ ] **Client-Side Match Dossier Export**: Generate downloadable, formatted PDF/DOCX clinical trial match summaries for oncology multidisciplinary tumor boards.
-- [ ] **FHIR / USCDI Ingestion**: Direct ingestion of FHIR R4 Patient and Condition resources from sandbox EHR systems.
+* [ ] **Semantic Vector Search**: Integrate pgvector embeddings for criteria-level cosine similarity to complement keyword retrieval.
+* [ ] **Cross-Trial Criterion Deduplication**: Cluster recurring baseline eligibility criteria (e.g. ECOG scores, organ function lab cutoffs) across multi-center trials to optimize LLM token usage.
+* [ ] **Client-Side Match Dossier Export**: Generate downloadable, formatted PDF/DOCX clinical trial match summaries for oncology multidisciplinary tumor boards.
+* [ ] **FHIR / USCDI Ingestion**: Direct ingestion of FHIR R4 Patient and Condition resources from sandbox EHR systems.
 
 ---
 
 ## Safety & Scope Disclaimer
 
-> **IMPORTANT DISCLAIMER**: This software is a portfolio engineering project developed for technical demonstration purposes. It is **not a medical device**, has not undergone clinical validation, and is **not a substitute for professional clinical judgment, diagnosis, or treatment planning**. All demo profiles use synthetic or anonymized clinical data. Real-world trial enrollment decisions must always be made by licensed healthcare professionals in consultation with patients and trial investigators.
+**IMPORTANT DISCLAIMER**: This software is a portfolio engineering project developed for technical demonstration purposes. It is not a medical device, has not undergone clinical validation, and is not a substitute for professional clinical judgment, diagnosis, or treatment planning. All demo profiles use synthetic or anonymized clinical data. Real-world trial enrollment decisions must always be made by licensed healthcare professionals in consultation with patients and trial investigators.
 
 ---
 
-## License
+## License & Attribution
 
-Distributed under the MIT License. See `LICENSE` for details.
+Distributed under the MIT License. See [LICENSE](LICENSE) for details.
+
+If you build upon, upgrade, or reference this architecture in your work, please preserve original copyright attribution:
+
+```bibtex
+@software{clinical_evidence_navigator_2026,
+  author = {snhaal},
+  title = {Clinical Evidence Navigator: Agentic RAG for Clinical Trial Eligibility Verification},
+  year = {2026},
+  url = {https://github.com/snhaal/clinical-evidence-navigator}
+}
+```
