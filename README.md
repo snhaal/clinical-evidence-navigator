@@ -24,42 +24,28 @@ Matching cancer patients to clinical trials is traditionally a manual, labor-int
 
 The system decouples **retrieval query planning** from **deep criterion-level verification**, guaranteeing high recall during discovery and strict factual accuracy during evaluation.
 
-```
-                              Unstructured Clinical Note
-     (Dense EHR text: pathology staging ypT2N1M0, prior resection, systemic therapies, ECOG PS 1)
-                                        │
-                                        ▼
-                              Stage 1: Planner Agent
-   • Free-text extraction to validated StructuredQuery schema (Pydantic v2)
-   • MeSH entity normalization (e.g. "esophageal squamous cell carcinoma")
-   • Staging & surgical sanitization: strips TNM notation, margin status, lab values from query
-                                        │
-                                        │ query.cond = "esophageal squamous cell carcinoma"
-                                        │ filter.overallStatus = "RECRUITING"
-                                        ▼
-                           ClinicalTrials.gov REST API v2
-   • Initial retrieval of active studies (pageSize = 10, candidate evaluation slice = top 3)
-   • 3-Tier Automated Query Relaxation Fallback:
-       1. Strict MeSH entity search
-       2. Histology/organ relaxation (e.g. "esophageal squamous cell carcinoma" -> "esophageal cancer")
-       3. Broad anatomical condition fallback
-                                        │
-                                        ▼
-                              Stage 2: Verifier Agent
-   • Deterministic Grounding: splits protocol text into atomic, numbered, citable criteria units
-   • Deep Zero-Shot Audit: evaluates up to 20 criteria per study in a single structured JSON pass
-   • Clinical Domain Equivalence Axioms:
-       - Histology satisfies pathological confirmation requirement
-       - Staging notation subsumption (Stage III satisfies Stage II-III / locally advanced)
-       - Absent distant metastasis satisfies M0 requirement
-   • Temporal Grounding: runtime UTC date injection for washout & interval reasoning
-   • Fail-Fast Short-Circuit: immediate termination on hard exclusion
-                                        │
-                                        ▼
-                            Next.js Frontend Dashboard
-   • Ranked trial shortlist categorized by match tier (Eligible, Unclear, Ineligible)
-   • Interactive criteria breakdown: verdict, clinical rationale, and verbatim evidence citations
-   • Transparent clinical abstention ("unclear") on undocumented parameters (0% false inclusions)
+```mermaid
+flowchart TD
+    A["📄 Unstructured Clinical Note<br/><i>Dense EHR text: pathology staging ypT2N1M0,<br/>prior resection, systemic therapies, ECOG PS 1</i>"]
+
+    B["🧠 Stage 1: Planner Agent<br/>• Free-text extraction to StructuredQuery schema (Pydantic v2)<br/>• MeSH entity normalization<br/>• Staging & surgical sanitization"]
+
+    C["🔍 ClinicalTrials.gov REST API v2<br/>• filter.overallStatus = RECRUITING<br/>• 3-Tier Automated Query Relaxation Fallback"]
+
+    D["✅ Stage 2: Verifier Agent<br/>• Deterministic grounding into atomic criteria<br/>• Deep zero-shot audit (up to 20 criteria/study)<br/>• Clinical Domain Equivalence Axioms<br/>• Temporal grounding (UTC date)<br/>• Fail-fast short-circuit"]
+
+    E["💻 Next.js Frontend Dashboard<br/>• Ranked trial shortlist (Eligible / Unclear / Ineligible)<br/>• Interactive criteria breakdown<br/>• Transparent clinical abstention"]
+
+    A --> B
+    B -->|"query.cond, filter.overallStatus=RECRUITING"| C
+    C --> D
+    D --> E
+
+    style A fill:#1e293b,stroke:#64748b,color:#fff
+    style B fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    style C fill:#164e3f,stroke:#10b981,color:#fff
+    style D fill:#4c1d3d,stroke:#ec4899,color:#fff
+    style E fill:#3f2d1e,stroke:#f59e0b,color:#fff
 ```
 
 ### Pipeline Execution Stages
