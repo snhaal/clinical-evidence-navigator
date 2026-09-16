@@ -6,7 +6,7 @@ Never hardcode a secret here — see .env.example for the required keys.
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,9 +23,13 @@ class Settings(BaseSettings):
     )
 
     # --- LLM provider (adapter-based, swappable) ------------------------
-    llm_provider: str = Field(default="anthropic", description="anthropic | gemini | groq")
-    llm_provider_api_key: str = Field(..., description="Server-side only. Never exposed to the browser.")
-    llm_model: str = Field(default="claude-sonnet-4-6")
+    llm_provider: str = Field(default="groq", description="anthropic | gemini | groq")
+    llm_provider_api_key: str = Field(
+        ...,
+        validation_alias=AliasChoices("LLM_PROVIDER_API_KEY", "GROQ_API_KEY"),
+        description="Server-side only. Never exposed to the browser.",
+    )
+    llm_model: str = Field(default="openai/gpt-oss-120b")
     llm_max_requests_per_minute: int = Field(
         default=5,
         description=(
