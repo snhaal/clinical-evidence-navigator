@@ -29,6 +29,18 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 # Limit simultaneous in-flight requests to Groq to prevent instant burst 429s
 _RATE_SEMAPHORE = asyncio.Semaphore(2)
+_GLOBAL_OUTBOUND_CALL_COUNT = 0
+
+
+def get_outbound_call_count() -> int:
+    return _GLOBAL_OUTBOUND_CALL_COUNT
+
+
+def reset_outbound_call_count() -> None:
+    global _GLOBAL_OUTBOUND_CALL_COUNT
+    _GLOBAL_OUTBOUND_CALL_COUNT = 0
+
+
 
 
 class LLMProviderError(Exception):
@@ -198,7 +210,17 @@ class LLMAdapter:
 
             try:
                 async with _RATE_SEMAPHORE:
+                    global _GLOBAL_OUTBOUND_CALL_COUNT
+                    _GLOBAL_OUTBOUND_CALL_COUNT += 1
+                    logger.info(
+                        "[Outbound LLM Call #%d] provider=%s model=%s (attempt=%d)",
+                        _GLOBAL_OUTBOUND_CALL_COUNT,
+                        self._provider,
+                        self._model,
+                        attempt + 1,
+                    )
                     await asyncio.sleep(0.2)
+
                     if self._provider == "anthropic":
                         return await self._complete_anthropic(
                             system_prompt, user_prompt, max_tokens, temperature
@@ -368,7 +390,11 @@ class LLMAdapter:
         except APITimeoutError as exc:
             raise LLMProviderError("Groq provider timed out.") from exc
         except APIStatusError as exc:
-            if exc.status_code == 400 and response_format is not None:
+            if (
+                exc.status_code == 400
+                and response_format is not None
+                and "max completion tokens" not in str(exc).lower()
+            ):
                 # Most likely cause: the configured model doesn't support
                 # strict json_schema mode (see docstring above). Retry once,
                 # this call only, with plain JSON object mode instead of
@@ -385,11 +411,22 @@ class LLMAdapter:
             raise LLMProviderError(
                 f"Groq API error ({exc.status_code}): {exc}"
             ) from exc
+
         except APIError as exc:
             raise LLMProviderError(f"Groq API error: {exc}") from exc
 
         choice = response.choices[0] if response.choices else None
-        text = choice.message.content if choice and choice.message else None
+        text = None
+        if choice and choice.message:
+            text = choice.message.content or getattr(
+                choice.message, "reasoning_content", None
+            )
+
+        if text:
+            match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
+            text = match.group(1).strip() if match else text.strip()
+
+
         if not text:
             finish_reason = choice.finish_reason if choice else None
             raise LLMProviderError(
@@ -412,27 +449,41 @@ class LLMAdapter:
     ) -> CompletionResult:
         """
         Used only when strict json_schema mode is rejected outright by the
-        configured model (see _complete_groq). Deliberately does NOT set
-        response_format at all — not even json_object mode — because that
-        mode's own top-level-must-be-an-object constraint would conflict
-        with prompts (like the batch Verify prompt) that explicitly ask for
-        a top-level JSON ARRAY. This falls back to exactly the same
-        prompt-only JSON reliance the Anthropic branch already uses, which
-        is safe because callers (verify.py, plan.py) already retry once and
-        degrade to "unclear" on a parse failure — this isn't a new risk,
-        just the same one Anthropic already lives with.
+        configured model (see _complete_groq). Enforces json_object mode,
+        ensures 'JSON' is in the prompt, checks both content and reasoning_content,
+        and strips markdown fences.
         """
         from openai import APIError, APITimeoutError, RateLimitError
 
         # Rate pacing for Groq's rolling 8,000 TPM limit
         await asyncio.sleep(3.0)
 
+        # Ensure system or user prompt explicitly contains the word "JSON"
+        # (required by Groq when using json_object mode).
+        formatted_messages = [dict(m) for m in messages]
+        has_json = any(
+            "json" in (m.get("content") or "").lower() for m in formatted_messages
+        )
+        if not has_json and formatted_messages:
+            formatted_messages[0]["content"] = (
+                formatted_messages[0].get("content") or ""
+            ) + "\n\nRespond with valid JSON."
+
+        is_array_prompt = any(
+            "json array" in (m.get("content") or "").lower() for m in formatted_messages
+        )
+        if is_array_prompt and formatted_messages:
+            formatted_messages[0]["content"] = (
+                formatted_messages[0].get("content") or ""
+            ) + "\n\nImportant: Return a JSON object containing a 'verdicts' key with the list: {\"verdicts\": [...]}. Must be valid JSON."
+
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
-                messages=messages,
+                messages=formatted_messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                response_format={"type": "json_object"},
                 timeout=self._timeout,
             )
         except RateLimitError as exc:
@@ -443,10 +494,25 @@ class LLMAdapter:
             raise LLMProviderError(f"Groq API error: {exc}") from exc
 
         choice = response.choices[0] if response.choices else None
-        text = choice.message.content if choice and choice.message else None
+        text = None
+        if choice and choice.message:
+            text = choice.message.content or getattr(
+                choice.message, "reasoning_content", None
+            )
+
+        if text:
+            # Strip markdown code fences (```json ... ```) so text content is never flagged as empty
+            match = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
+            text = match.group(1).strip() if match else text.strip()
+            if is_array_prompt and text.startswith("{"):
+                text = _unwrap_array_field(text, key="verdicts")
+
+
+
         if not text:
+            finish_reason = choice.finish_reason if choice else None
             raise LLMProviderError(
-                "Groq provider returned no text content (plain JSON fallback)."
+                f"Groq provider returned no text content (plain JSON fallback, finish_reason={finish_reason})."
             )
 
         usage = response.usage

@@ -111,9 +111,33 @@ Rules:
 
 
 CHUNK_SIZE = 5
-_BATCH_TOKENS_PER_CRITERION = 180  # Each JSON item is ~100-140 tokens with evidence_quote; 180 balances detail with token ceiling
+_BATCH_TOKENS_PER_CRITERION = 300  # 5 criteria * 300 = 1500 tokens; prevents "max completion tokens reached" under strict schema
 _BATCH_TOKENS_FLOOR = 600
-_BATCH_TOKENS_CEILING = 1500  # 5 criteria * 180 tokens = ~900 tokens, well under 1,500; prevents Groq TPM reservation 429
+_BATCH_TOKENS_CEILING = 2200  # Stays safely under Groq's 8,000 TPM limit
+
+
+
+class Verdict:
+    MATCH = "match"
+    NO_MATCH = "no_match"
+    UNCLEAR = "unclear"
+    INELIGIBLE = "ineligible"
+
+
+def _is_ineligible(verdict: CriterionVerdict) -> bool:
+    """
+    Returns True if an evaluated criterion verdict renders the patient ineligible:
+    - An inclusion criterion evaluated as 'no_match' (patient does not qualify).
+    - An exclusion criterion evaluated as 'match' (hard exclusion hit).
+    - Or an explicit 'ineligible' verdict string.
+    """
+    if verdict.verdict in ("ineligible", "INELIGIBLE"):
+        return True
+    if verdict.criterion_type == "inclusion" and verdict.verdict == "no_match":
+        return True
+    return verdict.criterion_type == "exclusion" and verdict.verdict == "match"
+
+
 
 
 
@@ -453,32 +477,38 @@ async def _verify_chunk(
 
         break  # Got a usable (if partial) response — stop retrying this chunk.
 
-    # Repair anything the chunk didn't cover: individually, not en masse,
-    # so a partially-good chunk response doesn't get thrown away.
+    # Handle omitted / unparsed criteria without firing individual repair cascades:
     missing = [c for key, c in criteria_by_key.items() if key not in parsed_by_key]
-    if missing and len(missing) == len(criteria) and last_error:
-        # The WHOLE chunk failed (provider error or unparseable both attempts) —
-        # fall back to unclear for all of them.
-        logger.error(
-            "Entire chunk failed for %s (%s); marking all %d criteria in chunk unclear.",
-            criteria[0].nct_id,
-            last_error,
-            len(missing),
-        )
-        for c in missing:
-            parsed_by_key[(c.criterion_type, c.criterion_index)] = _fallback_unclear(
-                c, reason=f"Batch verification failed ({last_error})."
+    if missing:
+        if len(missing) == len(criteria) and last_error:
+            # The WHOLE chunk failed (provider error or unparseable both attempts) —
+            # fall back to unclear for all of them.
+            logger.error(
+                "Entire chunk failed for %s (%s); marking all %d criteria in chunk unclear.",
+                criteria[0].nct_id,
+                last_error,
+                len(missing),
             )
-    else:
-        for c in missing:
-            logger.info(
-                "Repairing 1 criterion omitted from batch response for %s (#%d).",
-                c.nct_id,
-                c.criterion_index,
+            for c in missing:
+                parsed_by_key[(c.criterion_type, c.criterion_index)] = _fallback_unclear(
+                    c, reason=f"Batch verification failed ({last_error})."
+                )
+        else:
+            logger.warning(
+                "Marking %d omitted criteria for %s as unclear without repair cascade.",
+                len(missing),
+                criteria[0].nct_id,
             )
-            await asyncio.sleep(3.0)
-            repaired = await verify_criterion(patient_profile_text, c, llm=llm)
-            parsed_by_key[(c.criterion_type, c.criterion_index)] = repaired
+            for c in missing:
+                parsed_by_key[(c.criterion_type, c.criterion_index)] = CriterionVerdict(
+                    nct_id=c.nct_id,
+                    criterion_type=c.criterion_type,
+                    criterion_index=c.criterion_index,
+                    verdict=Verdict.UNCLEAR,
+                    rationale="Omitted from initial batch evaluation; marked unclear for patient safety.",
+                    cited_text=c.raw_text,
+                    citation_validated=False,
+                )
 
     # Return in the same order the criteria were given in this chunk.
     return [parsed_by_key[(c.criterion_type, c.criterion_index)] for c in criteria]
@@ -493,12 +523,15 @@ async def verify_trial_criteria(
     Judges eligibility criteria for ONE trial in sequential chunks of at most
     CHUNK_SIZE (5) criteria per LLM call.
 
-    Slicing criteria into chunks of 5 prevents output truncation ("Unterminated string")
-    and Groq json_validate_failed errors on trials with many criteria (e.g. 15-20 criteria),
-    while minimizing batch omission repairs and respecting rate limits.
+    Criteria list is capped at 5 criteria per study to prevent JSON truncation
+    and respect TPM limits. Fail-fast terminates further checks if any criterion
+    renders the patient ineligible.
     """
     if not criteria:
         return []
+
+    # Cap criteria per study to at most 5
+    criteria = criteria[:5]
 
     llm = llm or LLMAdapter()
     criteria_chunks = [
@@ -524,6 +557,15 @@ async def verify_trial_criteria(
             llm=llm,
         )
         all_verdicts.extend(chunk_verdicts)
+
+        # Fail-fast: if any evaluated criterion returns an ineligible verdict,
+        # halt further criteria checks for that study and return immediately.
+        if any(_is_ineligible(v) for v in chunk_verdicts):
+            logger.info(
+                "Study %s rendered ineligible by criterion failure; halting further checks.",
+                criteria[0].nct_id,
+            )
+            return all_verdicts
 
     return all_verdicts
 

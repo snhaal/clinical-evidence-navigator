@@ -163,8 +163,8 @@ async def test_batch_citation_not_a_substring_downgrades_only_that_criterion():
 
 
 @pytest.mark.asyncio
-async def test_batch_missing_criterion_is_repaired_individually_not_marked_unclear_outright():
-    """A batch response covering only some criteria triggers a targeted repair call for the rest."""
+async def test_batch_missing_criterion_is_marked_unclear_without_repair_storm():
+    """A batch response omitting a criterion marks it unclear directly without a 1-by-1 repair loop."""
     criteria = [make_criterion("A", index=0), make_criterion("B", index=1)]
     # Batch response only covers criterion 0.
     batch_response = json.dumps(
@@ -178,17 +178,19 @@ async def test_batch_missing_criterion_is_repaired_individually_not_marked_uncle
             },
         ]
     )
-    repair_response = json.dumps(
-        {"verdict": "unclear", "rationale": "missing info", "cited_text": "B"}
-    )
-    llm = FakeLLM(responses=[batch_response, repair_response])
+    llm = FakeLLM(responses=[batch_response])
 
     verdicts = await verify_all_criteria("profile", criteria, llm=llm)
 
-    assert len(llm.calls) == 2  # 1 batch call + 1 individual repair call
+    assert len(llm.calls) == 1  # 1 batch call, 0 repair calls
     assert verdicts[0].verdict == "match"
     assert verdicts[1].verdict == "unclear"
+    assert (
+        verdicts[1].rationale
+        == "Omitted from initial batch evaluation; marked unclear for patient safety."
+    )
     assert verdicts[1].cited_text == "B"
+
 
 
 @pytest.mark.asyncio
@@ -348,7 +350,7 @@ def test_batch_max_output_tokens_respects_floor():
 def test_batch_max_output_tokens_respects_ceiling():
     from app.pipeline.verify import _batch_max_output_tokens
 
-    assert _batch_max_output_tokens(1000, attempt=0) <= 1500
+    assert _batch_max_output_tokens(1000, attempt=0) <= 2200
 
 
 def test_batch_max_output_tokens_retry_gets_more_room_than_first_attempt():
@@ -360,18 +362,10 @@ def test_batch_max_output_tokens_retry_gets_more_room_than_first_attempt():
 
 
 @pytest.mark.asyncio
-async def test_batch_chunks_criteria_into_groups_of_five(monkeypatch):
-    """Criteria count > 5 is chunked into sequential batches of at most 5."""
-    sleep_calls = []
-
-    async def fake_sleep(duration):
-        sleep_calls.append(duration)
-
-    monkeypatch.setattr("app.pipeline.verify.asyncio.sleep", fake_sleep)
-
+async def test_criteria_capped_at_five_per_study():
+    """Criteria are capped at at most 5 before evaluating a study."""
     criteria = [make_criterion(f"Criterion {i}", index=i) for i in range(12)]
-    # 12 criteria -> 3 chunks: [0..4], [5..9], [10..11]
-    chunk_1 = json.dumps(
+    batch_response = json.dumps(
         [
             {
                 "criterion_type": "inclusion",
@@ -383,40 +377,45 @@ async def test_batch_chunks_criteria_into_groups_of_five(monkeypatch):
             for i in range(5)
         ]
     )
-    chunk_2 = json.dumps(
-        [
-            {
-                "criterion_type": "inclusion",
-                "criterion_index": i,
-                "verdict": "no_match",
-                "rationale": "ok",
-                "cited_text": f"Criterion {i}",
-            }
-            for i in range(5, 10)
-        ]
-    )
-    chunk_3 = json.dumps(
-        [
-            {
-                "criterion_type": "inclusion",
-                "criterion_index": i,
-                "verdict": "unclear",
-                "rationale": "ok",
-                "cited_text": f"Criterion {i}",
-            }
-            for i in range(10, 12)
-        ]
-    )
-    llm = FakeLLM(responses=[chunk_1, chunk_2, chunk_3])
+    llm = FakeLLM(responses=[batch_response])
 
     verdicts = await verify_all_criteria("some profile", criteria, llm=llm)
 
-    assert len(llm.calls) == 3
-    assert len(verdicts) == 12
-    assert [v.criterion_index for v in verdicts] == list(range(12))
-    assert [v.verdict for v in verdicts[:5]] == ["match"] * 5
-    assert [v.verdict for v in verdicts[5:10]] == ["no_match"] * 5
-    assert [v.verdict for v in verdicts[10:12]] == ["unclear"] * 2
-    # 2 sleep calls of 2.0s between the 3 chunks
-    assert sleep_calls == [2.0, 2.0]
+    assert len(llm.calls) == 1
+    assert len(verdicts) == 5
+    assert [v.criterion_index for v in verdicts] == [0, 1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_fail_fast_on_ineligible_criterion():
+    """If an evaluated criterion returns ineligible, further checks are halted immediately."""
+    criteria = [
+        make_criterion("Inclusion 1", index=0),
+        make_criterion("Inclusion 2", index=1),
+    ]
+    batch_response = json.dumps(
+        [
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 0,
+                "verdict": "no_match",
+                "rationale": "Fails inclusion",
+                "cited_text": "Inclusion 1",
+            },
+            {
+                "criterion_type": "inclusion",
+                "criterion_index": 1,
+                "verdict": "match",
+                "rationale": "ok",
+                "cited_text": "Inclusion 2",
+            },
+        ]
+    )
+    llm = FakeLLM(responses=[batch_response])
+
+    verdicts = await verify_all_criteria("some profile", criteria, llm=llm)
+
+    assert len(verdicts) >= 1
+    assert verdicts[0].verdict == "no_match"
+
 

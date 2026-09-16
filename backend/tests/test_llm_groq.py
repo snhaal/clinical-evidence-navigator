@@ -171,8 +171,8 @@ async def test_groq_falls_back_to_plain_json_when_strict_schema_rejected():
         client.calls[0]["response_format"] is not None
     )  # first attempt: strict schema
     assert (
-        "response_format" not in client.calls[1]
-    )  # fallback: no response_format at all
+        client.calls[1]["response_format"] == {"type": "json_object"}
+    )  # fallback: json_object mode
     assert json.loads(result.text) == [
         {"verdict": "match"}
     ]  # returned as-is, no unwrap attempted
