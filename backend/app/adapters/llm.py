@@ -19,6 +19,7 @@ Supported providers: "anthropic", "gemini", and "groq". Set LLM_PROVIDER in .env
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -222,15 +223,30 @@ class LLMAdapter:
                 last_error = exc
                 if attempt >= self._MAX_RATE_LIMIT_RETRIES:
                     break
-                logger.warning(
-                    "Rate limited by %s (attempt %d/%d) — backing off %.1fs before retrying.",
-                    self._provider,
-                    attempt + 1,
-                    self._MAX_RATE_LIMIT_RETRIES,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, self._BACKOFF_MAX_SECONDS)
+
+                header_wait = _parse_retry_after(exc)
+                if header_wait is not None and header_wait > 0:
+                    wait_seconds = header_wait + 0.5
+                    logger.warning(
+                        "Rate limited by %s (attempt %d/%d) — provider specified wait of %.2fs (+0.5s margin) = %.2fs before retrying.",
+                        self._provider,
+                        attempt + 1,
+                        self._MAX_RATE_LIMIT_RETRIES,
+                        header_wait,
+                        wait_seconds,
+                    )
+                else:
+                    wait_seconds = delay
+                    logger.warning(
+                        "Rate limited by %s (attempt %d/%d) — backing off %.1fs before retrying.",
+                        self._provider,
+                        attempt + 1,
+                        self._MAX_RATE_LIMIT_RETRIES,
+                        wait_seconds,
+                    )
+                    delay = min(delay * 2, self._BACKOFF_MAX_SECONDS)
+
+                await asyncio.sleep(wait_seconds)
 
         raise LLMRateLimitError(
             f"{self._provider} rate limit exceeded after {self._MAX_RATE_LIMIT_RETRIES} retries: {last_error}"
@@ -250,7 +266,7 @@ class LLMAdapter:
                 messages=[{"role": "user", "content": user_prompt}],
             )
         except anthropic.RateLimitError as exc:
-            raise _RateLimitSignal(str(exc)) from exc
+            raise _RateLimitSignal(str(exc), original_exc=exc) from exc
         except anthropic.APITimeoutError as exc:
             raise LLMProviderError("LLM provider timed out.") from exc
         except anthropic.APIError as exc:
@@ -348,7 +364,7 @@ class LLMAdapter:
                 timeout=self._timeout,
             )
         except RateLimitError as exc:
-            raise _RateLimitSignal(str(exc)) from exc
+            raise _RateLimitSignal(str(exc), original_exc=exc) from exc
         except APITimeoutError as exc:
             raise LLMProviderError("Groq provider timed out.") from exc
         except APIStatusError as exc:
@@ -420,7 +436,7 @@ class LLMAdapter:
                 timeout=self._timeout,
             )
         except RateLimitError as exc:
-            raise _RateLimitSignal(str(exc)) from exc
+            raise _RateLimitSignal(str(exc), original_exc=exc) from exc
         except APITimeoutError as exc:
             raise LLMProviderError("Groq provider timed out.") from exc
         except APIError as exc:
@@ -481,7 +497,9 @@ class LLMAdapter:
             )
         except ClientError as exc:
             if exc.code == 429:
-                raise _RateLimitSignal(f"{exc.status}: {exc.message}") from exc
+                raise _RateLimitSignal(
+                    f"{exc.status}: {exc.message}", original_exc=exc
+                ) from exc
             raise LLMProviderError(
                 f"Gemini client error ({exc.code} {exc.status}): {exc.message}"
             ) from exc
@@ -489,7 +507,9 @@ class LLMAdapter:
             # 5xx from Gemini is transient, same as a rate limit from the
             # caller's point of view — worth a backed-off retry, not a
             # straight failure.
-            raise _RateLimitSignal(f"{exc.status}: {exc.message}") from exc
+            raise _RateLimitSignal(
+                f"{exc.status}: {exc.message}", original_exc=exc
+            ) from exc
         except APIError as exc:
             raise LLMProviderError(
                 f"Gemini API error ({exc.code}): {exc.message}"
@@ -524,3 +544,77 @@ class LLMAdapter:
 
 class _RateLimitSignal(Exception):
     """Internal-only: signals `complete()`'s retry loop to back off and retry. Never escapes this module."""
+
+    def __init__(self, message: str, original_exc: Exception | None = None) -> None:
+        super().__init__(message)
+        self.original_exc = original_exc
+
+
+def _parse_duration_str(val: Any) -> float | None:
+    if not val:
+        return None
+    s = str(val).strip().lower()
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    match = re.match(r"^([\d\.]+)\s*(ms|s|m|h)?$", s)
+    if match:
+        amount = float(match.group(1))
+        unit = match.group(2) or "s"
+        if unit == "ms":
+            return amount / 1000.0
+        elif unit == "m":
+            return amount * 60.0
+        elif unit == "h":
+            return amount * 3600.0
+        return amount
+    return None
+
+
+def _parse_retry_after(exc: Exception) -> float | None:
+    """
+    Extracts the recommended wait duration in seconds from rate-limit response headers
+    (`retry-after`, `x-ratelimit-reset-tokens`, `x-ratelimit-reset-requests`) or
+    from the provider error message string. Returns None if unparseable.
+    """
+    candidates = [exc]
+    if isinstance(exc, _RateLimitSignal) and getattr(exc, "original_exc", None):
+        candidates.append(exc.original_exc)
+    cause = getattr(exc, "__cause__", None)
+    if cause:
+        candidates.append(cause)
+
+    for cand in candidates:
+        # 1. Check HTTP response headers (OpenAI / Groq API error response)
+        resp = getattr(cand, "response", None)
+        if resp is not None:
+            headers = getattr(resp, "headers", None) or {}
+            retry_after = headers.get("retry-after")
+            val = _parse_duration_str(retry_after)
+            if val is not None and val > 0:
+                return val
+
+            reset_tokens = headers.get("x-ratelimit-reset-tokens")
+            val = _parse_duration_str(reset_tokens)
+            if val is not None and val > 0:
+                return val
+
+            reset_requests = headers.get("x-ratelimit-reset-requests")
+            val = _parse_duration_str(reset_requests)
+            if val is not None and val > 0:
+                return val
+
+        # 2. Check error message text for "try again in X.Xs" or similar
+        msg = str(cand)
+        match = re.search(r"try again in ([\d\.]+)\s*(s|ms|m)?", msg, re.IGNORECASE)
+        if match:
+            amount = float(match.group(1))
+            unit = (match.group(2) or "s").lower()
+            if unit == "ms":
+                return amount / 1000.0
+            elif unit == "m":
+                return amount * 60.0
+            return amount
+
+    return None

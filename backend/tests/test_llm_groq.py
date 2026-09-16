@@ -176,3 +176,29 @@ async def test_groq_falls_back_to_plain_json_when_strict_schema_rejected():
     assert json.loads(result.text) == [
         {"verdict": "match"}
     ]  # returned as-is, no unwrap attempted
+
+
+def test_parse_retry_after_from_headers_and_message():
+    from app.adapters.llm import _parse_retry_after, _RateLimitSignal
+
+    # 1. Test retry-after header
+    class FakeErrorWithResponse(Exception):
+        response = SimpleNamespace(headers={"retry-after": "3.5"})
+
+    sig1 = _RateLimitSignal("rate limited", original_exc=FakeErrorWithResponse())
+    assert _parse_retry_after(sig1) == 3.5
+
+    # 2. Test x-ratelimit-reset-tokens header
+    class FakeErrorWithReset(Exception):
+        response = SimpleNamespace(headers={"x-ratelimit-reset-tokens": "2.4s"})
+
+    sig2 = _RateLimitSignal("rate limited", original_exc=FakeErrorWithReset())
+    assert _parse_retry_after(sig2) == 2.4
+
+    # 3. Test parsing from error message string
+    sig3 = _RateLimitSignal("Rate limit reached. Please try again in 4.25s.")
+    assert _parse_retry_after(sig3) == 4.25
+
+    # 4. Test unparseable
+    sig4 = _RateLimitSignal("Unspecified error with no numbers")
+    assert _parse_retry_after(sig4) is None

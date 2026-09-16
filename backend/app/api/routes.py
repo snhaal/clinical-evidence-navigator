@@ -116,11 +116,19 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
     # Cooldown pause to allow Groq rolling TPM window to slide down after Plan stage
     await asyncio.sleep(4.0)
 
+    # For live match verification, evaluate the top 2 most relevant studies to stay
+    # comfortably within Groq's rolling 8,000 TPM limit
+    candidate_trials = trials[:2]
+
     verdicts_by_nct_id: dict = {}
     criterion_ids_by_nct_id: dict = {}
     trial_stats: dict = {}  # nct_id -> {"latency_ms": int, "token_cost": int}
 
-    for trial in trials:
+    for idx, trial in enumerate(candidate_trials):
+        if idx > 0:
+            # Enforce cooldown between candidate study verifications to allow rolling token window to clear
+            await asyncio.sleep(6.0)
+
         async with engine.begin() as conn:
             await upsert_trial(conn, trial)
             criteria = decompose_eligibility_criteria(
@@ -152,7 +160,7 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
         }
 
     # --- Synthesize -------------------------------------------------------------
-    summaries = synthesize_results(trials, verdicts_by_nct_id)
+    summaries = synthesize_results(candidate_trials, verdicts_by_nct_id)
 
     # --- Persist match_runs + criterion_verdicts (observability requirement) --
     # latency_ms/token_cost are per-trial Verify-stage figures (one batched
