@@ -2,6 +2,8 @@ import type { ApiErrorShape, MatchResponse } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+export type BackendStatus = "connecting" | "ready" | "error";
+
 export class ApiError extends Error {
   status: number;
 
@@ -9,6 +11,36 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
     this.name = "ApiError";
+  }
+}
+
+/**
+ * Lightweight background ping to wake up the backend and probe status.
+ * Checks GET /health, falling back to GET / if needed.
+ */
+export async function pingBackend(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s cold-start grace period
+    const response = await fetch(`${API_BASE_URL}/health`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response.ok;
+  } catch {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(`${API_BASE_URL}/`, {
+        method: "GET",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 }
 

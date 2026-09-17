@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { BackendStatusBadge } from "@/components/BackendStatusBadge";
 import { Disclaimer } from "@/components/Disclaimer";
 import { ExportDossierButton } from "@/components/ExportDossierButton";
 import { ProfileForm } from "@/components/ProfileForm";
+import { RotatingLoadingState } from "@/components/RotatingLoadingState";
 import { TrialCard } from "@/components/TrialCard";
-import { ApiError, matchPatientProfile } from "@/lib/api";
+import { ApiError, type BackendStatus, matchPatientProfile, pingBackend } from "@/lib/api";
 import type { MatchResponse } from "@/lib/types";
 
 type ViewState =
@@ -16,12 +18,26 @@ type ViewState =
 
 export default function Home() {
   const [state, setState] = useState<ViewState>({ status: "idle" });
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>("connecting");
+
+  const checkBackendStatus = useCallback(async () => {
+    setBackendStatus("connecting");
+    const isOnline = await pingBackend();
+    setBackendStatus(isOnline ? "ready" : "error");
+  }, []);
+
+  // Pre-warm the backend on initial page mount to mitigate Render cold starts
+  useEffect(() => {
+    checkBackendStatus();
+  }, [checkBackendStatus]);
 
   async function handleSubmit(profile: string) {
     setState({ status: "submitting" });
     try {
       const data = await matchPatientProfile(profile);
       setState({ status: "result", data });
+      // If the match call succeeded, backend is confirmed active
+      setBackendStatus("ready");
     } catch (err) {
       const message =
         err instanceof ApiError ? err.message : "Something unexpected went wrong. Please try again.";
@@ -34,24 +50,26 @@ export default function Home() {
       <Disclaimer />
 
       <div className="mx-auto max-w-reading px-4 py-12">
-        <h1 className="font-serif text-3xl font-semibold leading-tight text-ink">
-          Clinical Evidence Navigator
-        </h1>
-        <p className="mt-2 text-base leading-relaxed text-muted">
-          Paste a patient profile and get a ranked shortlist of clinical trials, with every verdict
-          traced to the exact eligibility sentence it&apos;s based on.
-        </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="font-serif text-3xl font-semibold leading-tight text-ink">
+              Clinical Evidence Navigator
+            </h1>
+            <p className="mt-2 text-base leading-relaxed text-muted">
+              Paste a patient profile and get a ranked shortlist of clinical trials, with every verdict
+              traced to the exact eligibility sentence it&apos;s based on.
+            </p>
+          </div>
+          <div className="shrink-0 self-start sm:pt-1">
+            <BackendStatusBadge status={backendStatus} onRetry={checkBackendStatus} />
+          </div>
+        </div>
 
         <div className="mt-8 rounded-sm border border-border bg-surface p-5">
           <ProfileForm onSubmit={handleSubmit} isSubmitting={state.status === "submitting"} />
         </div>
 
-        {state.status === "submitting" && (
-          <p className="mt-6 text-sm text-muted" role="status">
-            Extracting a structured query, retrieving candidate trials, and reasoning through each
-            eligibility criterion — this can take up to about 12 seconds.
-          </p>
-        )}
+        {state.status === "submitting" && <RotatingLoadingState />}
 
         {state.status === "error" && (
           <div className="mt-6 rounded-sm border border-nomatch/30 bg-nomatch-soft p-4">
