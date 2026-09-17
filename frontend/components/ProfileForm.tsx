@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { DocumentDropzone } from "./DocumentDropzone";
 
 const SAMPLE_PROFILE =
   "64-year-old female, Stage III esophageal squamous cell carcinoma, completed neoadjuvant " +
@@ -28,6 +29,9 @@ export function ProfileForm({ onSubmit, isSubmitting }: ProfileFormProps) {
       <p className="mt-1 text-sm text-muted">
         Include the diagnosis, stage, and any prior treatment or exclusions you know.
       </p>
+      <div className="mt-4">
+        <DocumentDropzone onExtracted={setProfile} disabled={isSubmitting} />
+      </div>
       <textarea
         id="patient-profile"
         value={profile}
