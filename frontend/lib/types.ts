@@ -10,6 +10,8 @@ export interface StructuredQuery {
   exclusions: string[];
   biomarkers: string[];
   status_filter: string;
+  age?: number | null;
+  sex?: string | null;
 }
 
 export interface CriterionVerdict {
@@ -30,6 +32,8 @@ export interface TrialMatchSummary {
   unclear_count: number;
   hard_exclusion_hit: boolean;
   criterion_verdicts: CriterionVerdict[];
+  phase?: string[] | string;
+  status?: string;
 }
 
 export interface MatchResponse {
@@ -41,6 +45,8 @@ export interface MatchResponse {
   latency_ms: number;
   disclaimer: string;
 }
+
+export type DossierData = MatchResponse;
 
 export interface ApiErrorShape {
   detail: string;

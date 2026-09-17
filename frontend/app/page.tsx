@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Disclaimer } from "@/components/Disclaimer";
+import { ExportDossierButton } from "@/components/ExportDossierButton";
 import { ProfileForm } from "@/components/ProfileForm";
 import { TrialCard } from "@/components/TrialCard";
 import { ApiError, matchPatientProfile } from "@/lib/api";
@@ -77,12 +78,15 @@ export default function Home() {
 
         {state.status === "result" && !state.data.needs_clarification && state.data.trials.length > 0 && (
           <div className="mt-8">
-            <p className="text-sm text-muted">
-              {state.data.trials.length} candidate trial{state.data.trials.length === 1 ? "" : "s"} ·
-              {" "}
-              {(state.data.latency_ms / 1000).toFixed(1)}s
-            </p>
-            <ul className="mt-2">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <p className="text-sm text-muted">
+                {state.data.trials.length} candidate trial{state.data.trials.length === 1 ? "" : "s"} ·
+                {" "}
+                {(state.data.latency_ms / 1000).toFixed(1)}s
+              </p>
+              <ExportDossierButton dossierData={state.data} />
+            </div>
+            <ul className="mt-3">
               {state.data.trials.map((trial) => (
                 <TrialCard key={trial.nct_id} trial={trial} />
               ))}
