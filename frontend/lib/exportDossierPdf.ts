@@ -30,12 +30,59 @@ const VERDICT_COLORS = {
   },
 } as const;
 
+/**
+ * Normalizes and sanitizes text for jsPDF standard font rendering.
+ * Replaces non-Latin1 / problematic Unicode characters before rendering:
+ * - >=, <=, +/-, x, superscripts (e.g. 10^9), standard quotes, dashes,
+ * and strips zero-width spaces.
+ */
+export function cleanPdfText(text: string | null | undefined): string {
+  if (!text) return "";
+
+  return (
+    text
+      // Zero-width spaces (\u200B-\u200D, \uFEFF) -> stripped
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      // Comparison & Math symbols
+      .replace(/≥/g, ">=")
+      .replace(/≤/g, "<=")
+      .replace(/±/g, "+/-")
+      .replace(/×/g, "x")
+      .replace(/÷/g, "/")
+      .replace(/≠/g, "!=")
+      .replace(/≈/g, "~")
+      // Superscripts (e.g., 10⁹ -> 10^9, 109 superscripts, etc.)
+      .replace(/10[⁹9]/g, "10^9")
+      .replace(/⁰/g, "^0")
+      .replace(/¹/g, "^1")
+      .replace(/²/g, "^2")
+      .replace(/³/g, "^3")
+      .replace(/⁴/g, "^4")
+      .replace(/⁵/g, "^5")
+      .replace(/⁶/g, "^6")
+      .replace(/⁷/g, "^7")
+      .replace(/⁸/g, "^8")
+      .replace(/⁹/g, "^9")
+      // Micro / units
+      .replace(/[μµ]/g, "u")
+      // Curly quotes “”‘’ -> standard quotes "'
+      .replace(/[“”„‟]/g, '"')
+      .replace(/[‘’‚‛]/g, "'")
+      // En/em dashes –— -> -
+      .replace(/[–—―‒]/g, "-")
+      // Ellipsis
+      .replace(/…/g, "...")
+      // Middle dots or bullet points if any
+      .replace(/[•·]/g, "-")
+  );
+}
+
 function formatVerdictLabel(verdict: Verdict): string {
   return VERDICT_COLORS[verdict]?.label ?? verdict.toUpperCase();
 }
 
 function formatStatus(trial: TrialMatchSummary): string {
-  if (trial.status) return trial.status.replace(/_/g, " ");
+  if (trial.status) return cleanPdfText(trial.status.replace(/_/g, " "));
   if (trial.overall_verdict === "match") return "Match";
   if (trial.overall_verdict === "no_match") {
     return trial.hard_exclusion_hit ? "Excluded" : "No match";
@@ -46,7 +93,7 @@ function formatStatus(trial: TrialMatchSummary): string {
 function formatPhase(phase?: string[] | string): string {
   if (!phase) return "N/A";
   if (Array.isArray(phase)) return phase.length > 0 ? phase.join(", ") : "N/A";
-  return phase;
+  return cleanPdfText(phase);
 }
 
 /**
@@ -66,6 +113,9 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
   const pageHeight = doc.internal.pageSize.getHeight();
   const marginX = 14;
   const contentWidth = pageWidth - marginX * 2; // 182mm
+
+  // Explicit table margins for every autoTable invocation to prevent footer collisions
+  const tableMargin = { top: 40, bottom: 50, left: marginX, right: marginX };
 
   // --------------------------------------------------------------------------
   // 1. Header
@@ -87,7 +137,7 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
     dateStyle: "medium",
     timeStyle: "short",
   });
-  doc.text(`Generated: ${timestamp}`, pageWidth - marginX, currentY, { align: "right" });
+  doc.text(`Generated: ${cleanPdfText(timestamp)}`, pageWidth - marginX, currentY, { align: "right" });
 
   currentY += 4;
   doc.setDrawColor(...COLOR_BORDER);
@@ -114,30 +164,30 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
   const patientSummaryBody = [
     [
       "Patient ID",
-      data.patient_profile_id || "N/A",
+      cleanPdfText(data.patient_profile_id || "N/A"),
       "Demographics",
-      demographicsStr,
+      cleanPdfText(demographicsStr),
     ],
     [
       "Primary Condition",
-      sq?.condition || "Not specified",
+      cleanPdfText(sq?.condition || "Not specified"),
       "Key Biomarkers",
-      sq?.biomarkers?.length ? sq.biomarkers.join(", ") : "None reported",
+      cleanPdfText(sq?.biomarkers?.length ? sq.biomarkers.join(", ") : "None reported"),
     ],
     [
       "Disease Stage",
-      sq?.stage || "Not specified",
+      cleanPdfText(sq?.stage || "Not specified"),
       "Prior Therapies",
-      sq?.prior_therapy?.length ? sq.prior_therapy.join(", ") : "None reported",
+      cleanPdfText(sq?.prior_therapy?.length ? sq.prior_therapy.join(", ") : "None reported"),
     ],
   ];
 
   if (sq?.exclusions?.length) {
     patientSummaryBody.push([
       "Status Filter",
-      sq.status_filter || "RECRUITING",
+      cleanPdfText(sq.status_filter || "RECRUITING"),
       "Stated Exclusions",
-      sq.exclusions.join(", "),
+      cleanPdfText(sq.exclusions.join(", ")),
     ]);
   }
 
@@ -149,15 +199,16 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
       fontSize: 8.5,
       cellPadding: 2.5,
       textColor: [...COLOR_INK],
+      valign: "top",
     },
     columnStyles: {
-      0: { fontStyle: "bold", cellWidth: 32, textColor: [...COLOR_MUTED] },
-      1: { cellWidth: 59 },
-      2: { fontStyle: "bold", cellWidth: 32, textColor: [...COLOR_MUTED] },
-      3: { cellWidth: 59 },
+      0: { fontStyle: "bold", cellWidth: 32, textColor: [...COLOR_MUTED], valign: "top" },
+      1: { cellWidth: 59, valign: "top" },
+      2: { fontStyle: "bold", cellWidth: 32, textColor: [...COLOR_MUTED], valign: "top" },
+      3: { cellWidth: 59, valign: "top" },
     },
     body: patientSummaryBody,
-    margin: { left: marginX, right: marginX },
+    margin: tableMargin,
     tableLineColor: [...COLOR_BORDER],
     tableLineWidth: 0.2,
   });
@@ -185,10 +236,10 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
         : "N/A";
 
     return [
-      trial.nct_id,
-      trial.title,
+      cleanPdfText(trial.nct_id),
+      cleanPdfText(trial.title),
       formatPhase(trial.phase),
-      scoreFormatted,
+      cleanPdfText(scoreFormatted),
       formatStatus(trial),
     ];
   });
@@ -211,15 +262,16 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
       textColor: [...COLOR_INK],
       lineColor: [...COLOR_BORDER],
       lineWidth: 0.2,
+      valign: "top",
     },
     columnStyles: {
-      0: { cellWidth: 26, fontStyle: "bold" },
-      1: { cellWidth: 80 },
-      2: { cellWidth: 20, halign: "center" },
-      3: { cellWidth: 28, halign: "center" },
-      4: { cellWidth: 28, halign: "center" },
+      0: { cellWidth: 26, fontStyle: "bold", valign: "top" },
+      1: { cellWidth: 80, valign: "top" },
+      2: { cellWidth: 20, halign: "center", valign: "top" },
+      3: { cellWidth: 28, halign: "center", valign: "top" },
+      4: { cellWidth: 28, halign: "center", valign: "top" },
     },
-    margin: { left: marginX, right: marginX, bottom: 20 },
+    margin: tableMargin,
   });
 
   // --------------------------------------------------------------------------
@@ -231,9 +283,9 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
     currentY = (rankingsTable?.finalY ?? currentY) + 10;
 
     // Check if we need a page break before starting detailed verdicts
-    if (currentY > pageHeight - 50) {
+    if (currentY > pageHeight - 130) {
       doc.addPage();
-      currentY = 20;
+      currentY = 45;
     }
 
     doc.setFont("helvetica", "bold");
@@ -249,29 +301,30 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
         currentY = (lastTable?.finalY ?? currentY) + 8;
       }
 
-      // Ensure room for trial title header
-      if (currentY > pageHeight - 45) {
+      // Orphan study header prevention: evaluate remaining vertical height against pageHeight - 130
+      if (currentY > pageHeight - 130) {
         doc.addPage();
-        currentY = 20;
+        currentY = 45;
       }
 
       // Trial Section Subheader
       doc.setFont("helvetica", "bold");
       doc.setFontSize(9.5);
       doc.setTextColor(...COLOR_ACCENT);
-      const trialHeading = `Study ${trialIndex + 1}: ${trial.nct_id} — ${trial.title}`;
+      const trialHeading = cleanPdfText(`Study ${trialIndex + 1}: ${trial.nct_id} - ${trial.title}`);
       const splitTitle = doc.splitTextToSize(trialHeading, contentWidth);
       doc.text(splitTitle, marginX, currentY);
 
       currentY += splitTitle.length * 4.5 + 2.5;
 
-      // Detailed criteria table rows
+      // Detailed criteria table rows with clean Column 0 formatting and top alignment
       const criteriaRows = (trial.criterion_verdicts ?? []).map((crit) => {
         const typeLabel =
           crit.criterion_type === "inclusion" ? "Inclusion" : "Exclusion";
-        const criterionCol = `${typeLabel} #${crit.criterion_index + 1}\n\nRationale:\n${crit.rationale || "None"}`;
-        const verdictCol = formatVerdictLabel(crit.verdict);
-        let citationCol = `"${crit.cited_text || "No quote provided"}"`;
+        const rationaleText = cleanPdfText(crit.rationale || "None");
+        const criterionCol = `${typeLabel} #${crit.criterion_index + 1}\n\nRationale:\n${rationaleText}`;
+        const verdictCol = cleanPdfText(formatVerdictLabel(crit.verdict));
+        let citationCol = `"${cleanPdfText(crit.cited_text || "No quote provided")}"`;
         if (!crit.citation_validated) {
           citationCol += "\n\n[Warning: Unverified against trial protocol]";
         }
@@ -286,6 +339,8 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
             ? criteriaRows
             : [["No individual criteria evaluated", "UNCLEAR", "N/A"]],
         theme: "grid",
+        showHead: "everyPage",
+        rowPageBreak: "avoid",
         headStyles: {
           fillColor: [...COLOR_BG_SOFT],
           textColor: [...COLOR_INK],
@@ -302,11 +357,12 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
           textColor: [...COLOR_INK],
           lineColor: [...COLOR_BORDER],
           lineWidth: 0.2,
+          valign: "top",
         },
         columnStyles: {
-          0: { cellWidth: 48 },
-          1: { cellWidth: 24, halign: "center" },
-          2: { cellWidth: 110 },
+          0: { cellWidth: 48, valign: "top" },
+          1: { cellWidth: 24, halign: "center", valign: "top" },
+          2: { cellWidth: 110, valign: "top" },
         },
         didParseCell: (hookData) => {
           if (hookData.section === "body" && hookData.column.index === 1) {
@@ -326,7 +382,7 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
             }
           }
         },
-        margin: { left: marginX, right: marginX, top: 20, bottom: 20 },
+        margin: tableMargin,
       });
     });
   }
@@ -349,7 +405,7 @@ export async function generateClinicalDossier(data: DossierData): Promise<jsPDF>
     doc.setTextColor(...COLOR_MUTED);
 
     const disclaimerText =
-      "CONFIDENTIAL · FOR RESEARCH USE ONLY · NOT A SUBSTITUTE FOR CLINICAL JUDGMENT";
+      "CONFIDENTIAL - FOR RESEARCH USE ONLY - NOT A SUBSTITUTE FOR CLINICAL JUDGMENT";
     doc.text(disclaimerText, marginX, pageHeight - 9);
     doc.text(`Page ${i} of ${totalPages}`, pageWidth - marginX, pageHeight - 9, {
       align: "right",
