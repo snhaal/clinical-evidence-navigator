@@ -137,7 +137,7 @@ class ClinicalTrialsClient:
         params["filter.overallStatus"] = "RECRUITING"
 
         # Sanitize and guard query.term against parser-breaking characters and length
-        if "query.term" in params and params["query.term"]:
+        if params.get("query.term"):
             sanitized_term = self._sanitize_query_term(params["query.term"])
             if sanitized_term:
                 params["query.term"] = sanitized_term

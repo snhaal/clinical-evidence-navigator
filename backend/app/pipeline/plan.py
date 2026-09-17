@@ -57,7 +57,7 @@ Rules:
 - exclusions should list patient-stated comorbidities or exclusion-relevant facts (e.g. "prior immunotherapy", "distant metastasis"), not general commentary.
 - status_filter defaults to "RECRUITING" unless the profile implies otherwise.
 - SEARCH QUERY RULE: For ClinicalTrials.gov search terms, extract ONLY the primary disease / condition name (e.g., 'esophageal squamous cell carcinoma' or 'lung adenocarcinoma').
-- Limit search terms and extracted keywords to 2–4 concise search tokens (e.g., "EGFR" or "Stage IV EGFR").
+- Limit search terms and extracted keywords to 2-4 concise search tokens (e.g., "EGFR" or "Stage IV EGFR").
 - Never output punctuation, percentages (%), parentheses, or full sentences in the search terms or keyword fields (stage, prior_therapy, biomarkers). Extract only concise individual drug names (e.g. "cisplatin") or key gene targets (e.g. "EGFR"), never descriptions or narrative sentences.
 - DO NOT include staging notation (TNM, AJCC, Stage III), specific pathology descriptors (ypT2N1M0), lab thresholds, or surgical procedures in the search query keywords. Those are evaluated during verification, not retrieval.
 """
