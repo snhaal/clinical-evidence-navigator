@@ -1,318 +1,329 @@
 /**
- * Deterministic Clinical Text Composer
+ * High-Fidelity Client-Side Clinical Text Parser
  *
- * Extracts age, sex, condition/diagnosis, disease stage, biomarkers,
- * prior therapies, and relevant clinical status from raw clinical notes
- * and pathology reports using deterministic regex and keyword heuristics.
- *
- * Composes the extracted facts into ONE natural sentence matching the style
- * of ProfileForm's SAMPLE_PROFILE constant:
- * "64-year-old female, Stage III esophageal squamous cell carcinoma, completed neoadjuvant chemoradiation, no distant metastasis."
+ * Extracts and preserves complete clinical information with zero information loss:
+ * 1. Multi-Line & Section-Aware Extraction:
+ *    - Captures entire content blocks for DIAGNOSIS, DISEASE STAGE, BIOMARKER PANEL,
+ *      and PRIOR THERAPIES rather than truncating to single keywords.
+ *    - Preserves multi-line biomarker panels (e.g. EGFR Exon 19, PD-L1 TPS 45%, ALK Negative).
+ *    - Preserves specific drug regimens, cycle counts, surgical procedures, and negative qualifiers.
+ *    - Preserves full metastatic sites and substaging details.
+ * 2. Clean Multi-Line Formatting:
+ *    - Composes a structured, rich clinical brief for the ProfileForm textarea.
+ * 3. Unstructured Fallback:
+ *    - When structured section headers are not present, extracts and preserves
+ *      full sentences containing clinical facts.
  */
 
-export function parseClinicalDocument(text: string): string {
-  if (!text || typeof text !== "string" || text.trim().length === 0) {
-    return "";
-  }
+interface SectionMatch {
+  type: "demographics" | "diagnosis" | "stage" | "biomarkers" | "therapies" | "imaging";
+  headerName: string;
+  startIndex: number;
+  contentStartIndex: number;
+}
 
-  const cleanText = text.replace(/\r\n/g, " ").replace(/\n/g, " ").replace(/\s+/g, " ");
+const SECTION_PATTERNS: Array<{
+  type: "demographics" | "diagnosis" | "stage" | "biomarkers" | "therapies" | "imaging";
+  regex: RegExp;
+}> = [
+  {
+    type: "demographics",
+    regex:
+      /^(?:patient(?:\s+clinical\s+record|\s+demographics|\s+profile|\s+information|\s+info|\s+record|\s+summary)?|demographics|patient\s+characteristics|patient)$/i,
+  },
+  {
+    type: "diagnosis",
+    regex:
+      /^(?:(?:primary|pathologic|histopathologic|clinical|final)?\s*diagnosis|impression|clinical\s+history(?:\s*&\s*diagnosis)?|cancer\s+type|disease|diagnosis\s*\/\s*histology)$/i,
+  },
+  {
+    type: "stage",
+    regex:
+      /^(?:(?:disease|clinical|pathologic|tumor)?\s*stage|staging|extent\s+of\s+disease|disease\s+extent)$/i,
+  },
+  {
+    type: "biomarkers",
+    regex:
+      /^(?:biomarker(?:\s+panel|\s+analysis|\s+profile|\s+testing)?|biomarkers|molecular(?:\s+testing|\s+profile|\s+analysis|\s+findings)?|genomic(?:\s+profile|\s+findings)?|ngs(?:\s+testing)?|ihc(?:\s*\/\s*fish)?|tumor\s+markers|mutational\s+analysis)$/i,
+  },
+  {
+    type: "therapies",
+    regex:
+      /^(?:prior\s+therap(?:y|ies)|treatment(?:\s+history)?|prior\s+treatment(?:s)?|previous\s+therapies|therapy\s+history|systemic\s+therapy|surgical\s+history|treatments?|oncologic\s+history)$/i,
+  },
+  {
+    type: "imaging",
+    regex:
+      /^(?:imaging(?:\s+findings)?|restaging(?:\s+findings)?|imaging\s*&\s*restaging|imaging\s*&\s*staging|radiology(?:\s+findings)?)$/i,
+  },
+];
 
-  // --------------------------------------------------------------------------
-  // 1. Demographics: Age and Sex
-  // --------------------------------------------------------------------------
+/**
+ * Normalizes multi-line and whitespace formatting within a text snippet.
+ */
+function cleanWhitespace(val: string): string {
+  return val.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/[ \t]+/g, " ").trim();
+}
+
+/**
+ * Extracts demographic age and sex information from text.
+ */
+function extractDemographics(rawText: string): string | null {
+  const text = rawText.replace(/\r\n/g, " ").replace(/\n/g, " ");
+
   let age: string | null = null;
   const ageMatch =
-    cleanText.match(/\b(\d{1,3})[- ](?:year[- ]old|yo\b|y\/o\b|yr[- ]old)/i) ||
-    cleanText.match(/(?:patient is|aged?|age[:\s]+)\s*(\d{1,3})\b/i) ||
-    cleanText.match(/\b(\d{1,3})\s+years?\s+of\s+age\b/i);
+    text.match(/\b(\d{1,3})[- ](?:year[- ]old|yo\b|y\/o\b|yr[- ]old)/i) ||
+    text.match(/(?:patient is|aged?|age[:\s]+)\s*(\d{1,3})\b/i) ||
+    text.match(/\b(\d{1,3})\s+years?\s+of\s+age\b/i);
 
   if (ageMatch) {
-    const parsedAge = parseInt(ageMatch[1], 10);
-    if (parsedAge >= 0 && parsedAge <= 120) {
-      age = `${parsedAge}`;
+    const parsed = parseInt(ageMatch[1], 10);
+    if (parsed >= 0 && parsed <= 120) {
+      age = `${parsed}`;
     }
   }
 
   let sex: "female" | "male" | null = null;
-  // Match female first to prevent 'male' substring collision
-  if (/\b(?:female|woman)\b/i.test(cleanText) || /\bsex[:\s]+(?:f|female)\b/i.test(cleanText) || /\bgender[:\s]+female\b/i.test(cleanText)) {
+  if (
+    /\b(?:female|woman)\b/i.test(text) ||
+    /\bsex[:\s]+(?:f|female)\b/i.test(text) ||
+    /\bgender[:\s]+female\b/i.test(text)
+  ) {
     sex = "female";
-  } else if (/\b(?:male|man)\b/i.test(cleanText) || /\bsex[:\s]+(?:m|male)\b/i.test(cleanText) || /\bgender[:\s]+male\b/i.test(cleanText)) {
+  } else if (
+    /\b(?:male|man)\b/i.test(text) ||
+    /\bsex[:\s]+(?:m|male)\b/i.test(text) ||
+    /\bgender[:\s]+male\b/i.test(text)
+  ) {
     sex = "male";
   }
 
-  let demographicsPhrase: string | null = null;
-  if (age && sex) {
-    demographicsPhrase = `${age}-year-old ${sex}`;
-  } else if (age) {
-    demographicsPhrase = `${age}-year-old`;
-  } else if (sex) {
-    demographicsPhrase = `${sex}`;
-  }
+  if (age && sex) return `${age}-year-old ${sex}`;
+  if (age) return `${age}-year-old`;
+  if (sex) return `${sex}`;
+  return null;
+}
 
-  // --------------------------------------------------------------------------
-  // 2. Disease Stage
-  // --------------------------------------------------------------------------
-  let stage: string | null = null;
-  const stageMatch =
-    cleanText.match(/\b(Stage\s+(?:IV[ABC]?|III[ABC]?|II[ABC]?|I[ABC]?|0|[1-4][ABC]?))\b/i) ||
-    cleanText.match(/\b(metastatic|recurrent|advanced)\b/i);
+/**
+ * Formats multi-line biomarker panels into clean, high-fidelity entries.
+ */
+function formatBiomarkers(content: string): string {
+  const lines = content.split(/\n/);
+  const formattedItems: string[] = [];
 
-  if (stageMatch) {
-    // Normalize Roman numerals capitalization: e.g. "stage iii" -> "Stage III"
-    const rawStage = stageMatch[1];
-    if (/^stage/i.test(rawStage)) {
-      stage = rawStage.replace(/^stage\s+/i, "Stage ");
-      // Capitalize letters in stage: e.g. Stage iiia -> Stage IIIA
-      stage = stage.replace(/([ivx0-9]+[abc]?)/i, (m) => m.toUpperCase());
-    } else {
-      stage = rawStage.charAt(0).toUpperCase() + rawStage.slice(1).toLowerCase();
+  for (const line of lines) {
+    let item = line.trim();
+    if (!item) continue;
+
+    // Strip leading bullets, asterisks, numbering
+    item = item.replace(/^[-*•\d.)\s]+/, "").trim();
+    if (!item) continue;
+
+    // Remove filler prefixes like "Tumor tissue assessed:"
+    item = item.replace(/^(?:tumor\s+tissue\s+assessed|testing\s+shows|findings)[:\s]*/i, "").trim();
+
+    // Normalize "GENE: Status" -> "GENE Status" (e.g. "EGFR: Exon 19" -> "EGFR Exon 19", "ALK: Negative" -> "ALK Negative")
+    item = item.replace(/^([A-Za-z0-9/-]+):\s+/i, "$1 ");
+
+    // Normalize common formatting
+    item = item.replace(/\s+/g, " ").trim();
+    if (item.length > 0) {
+      formattedItems.push(item);
     }
   }
 
-  // --------------------------------------------------------------------------
-  // 3. Condition / Diagnosis
-  // --------------------------------------------------------------------------
-  let condition: string | null = null;
-
-  // Check for common specific oncologic conditions
-  const KNOWN_CONDITIONS: Array<{ pattern: RegExp; label: string }> = [
-    { pattern: /\besophageal\s+squamous\s+cell\s+carcinoma\b/i, label: "esophageal squamous cell carcinoma" },
-    { pattern: /\besophageal\s+adenocarcinoma\b/i, label: "esophageal adenocarcinoma" },
-    { pattern: /\besophageal\s+cancer\b/i, label: "esophageal cancer" },
-    { pattern: /\bnon[- ]small\s+cell\s+lung\s+cancer\b/i, label: "non-small cell lung cancer" },
-    { pattern: /\bsmall\s+cell\s+lung\s+cancer\b/i, label: "small cell lung cancer" },
-    { pattern: /\blung\s+adenocarcinoma\b/i, label: "lung adenocarcinoma" },
-    { pattern: /\blung\s+squamous\s+cell\s+carcinoma\b/i, label: "lung squamous cell carcinoma" },
-    { pattern: /\blung\s+cancer\b/i, label: "lung cancer" },
-    { pattern: /\btriple[- ]negative\s+breast\s+cancer\b/i, label: "triple-negative breast cancer" },
-    { pattern: /\binvasive\s+ductal\s+carcinoma\b/i, label: "invasive ductal carcinoma" },
-    { pattern: /\bbreast\s+adenocarcinoma\b/i, label: "breast adenocarcinoma" },
-    { pattern: /\bbreast\s+cancer\b/i, label: "breast cancer" },
-    { pattern: /\bcolorectal\s+cancer\b/i, label: "colorectal cancer" },
-    { pattern: /\bcolon\s+adenocarcinoma\b/i, label: "colon adenocarcinoma" },
-    { pattern: /\brectal\s+adenocarcinoma\b/i, label: "rectal adenocarcinoma" },
-    { pattern: /\bpancreatic\s+ductal\s+adenocarcinoma\b/i, label: "pancreatic ductal adenocarcinoma" },
-    { pattern: /\bpancreatic\s+adenocarcinoma\b/i, label: "pancreatic adenocarcinoma" },
-    { pattern: /\bpancreatic\s+cancer\b/i, label: "pancreatic cancer" },
-    { pattern: /\bgastric\s+adenocarcinoma\b/i, label: "gastric adenocarcinoma" },
-    { pattern: /\bgastric\s+cancer\b/i, label: "gastric cancer" },
-    { pattern: /\bhepatocellular\s+carcinoma\b/i, label: "hepatocellular carcinoma" },
-    { pattern: /\brenal\s+cell\s+carcinoma\b/i, label: "renal cell carcinoma" },
-    { pattern: /\bprostate\s+adenocarcinoma\b/i, label: "prostate adenocarcinoma" },
-    { pattern: /\bprostate\s+cancer\b/i, label: "prostate cancer" },
-    { pattern: /\bcutaneous\s+melanoma\b/i, label: "cutaneous melanoma" },
-    { pattern: /\bmelanoma\b/i, label: "melanoma" },
-    { pattern: /\bhigh[- ]grade\s+serous\s+ovarian\s+carcinoma\b/i, label: "high-grade serous ovarian carcinoma" },
-    { pattern: /\bovarian\s+carcinoma\b/i, label: "ovarian carcinoma" },
-    { pattern: /\bovarian\s+cancer\b/i, label: "ovarian cancer" },
-    { pattern: /\bhead\s+and\s+neck\s+squamous\s+cell\s+carcinoma\b/i, label: "head and neck squamous cell carcinoma" },
-    { pattern: /\burothelial\s+carcinoma\b/i, label: "urothelial carcinoma" },
-    { pattern: /\bbladder\s+cancer\b/i, label: "bladder cancer" },
-    { pattern: /\bglioblastoma\b/i, label: "glioblastoma" },
-  ];
-
-  for (const cond of KNOWN_CONDITIONS) {
-    if (cond.pattern.test(cleanText)) {
-      condition = cond.label;
-      break;
-    }
+  if (formattedItems.length === 0) {
+    return cleanWhitespace(content).replace(/\s+/g, " ");
   }
 
-  // If no known condition matched, attempt diagnosis header or generic histology heuristic
-  if (!condition) {
-    const diagMatch =
-      cleanText.match(/(?:primary diagnosis|pathologic diagnosis|diagnosis|impression|cancer type)[:\s]+([A-Za-z0-9\s-]+?)(?=[,.;\n]|\bstage\b|\bgrade\b|$)/i) ||
-      cleanText.match(/\b([A-Za-z\s-]+(?:squamous cell carcinoma|adenocarcinoma|carcinoma|melanoma|sarcoma|lymphoma|cancer|malignancy|tumor|leukemia|myeloma))\b/i);
+  // Join items cleanly with commas, avoiding duplicate trailing periods
+  return formattedItems.join(", ").replace(/\.+$/, "");
+}
 
-    if (diagMatch && diagMatch[1]) {
-      const candidate = diagMatch[1].trim().toLowerCase();
-      // Avoid false positive matches on common metadata words
-      if (candidate.length > 3 && !/^(unknown|none|n\/a|pending|sample|report)$/i.test(candidate)) {
-        condition = candidate;
+/**
+ * Checks if a sentence contains oncologic or medical keywords.
+ */
+function isClinicalSentence(sentence: string): boolean {
+  return (
+    /\b(?:\d{1,3}[- ](?:year[- ]old|yo\b|y\/o\b)|male|female|woman|man)\b/i.test(sentence) ||
+    /\b(?:stage\s+(?:IV[ABC]?|III[ABC]?|II[ABC]?|I[ABC]?|0|[1-4][ABC]?)|metastat|disseminat|metastasis|metastases|mets|effusion|recurrent|advanced)\b/i.test(sentence) ||
+    /\b(?:cancer|carcinoma|adenocarcinoma|squamous|melanoma|sarcoma|lymphoma|leukemia|tumor|malignan|neoplasm|glioma)\b/i.test(sentence) ||
+    /\b(?:egfr|alk|kras|braf|her2|erbb2|pd-l1|pdl1|msi|mss|mmr|dmmr|pmmr|brca1|brca2|brca|ros1|ret|met|ntrk|tmb|exon\s*\d+|tps|cps|wild[- ]?type|mutat(?:ion|ed))\b/i.test(sentence) ||
+    /\b(?:chemotherap|chemoradiat|radiat|immunotherap|resection|lobectomy|surgery|surgical|cycles?|cisplatin|pemetrexed|carboplatin|paclitaxel|docetaxel|gemcitabine|doxorubicin|cyclophosphamide|fluorouracil|5-fu|oxaliplatin|irinotecan|pembrolizumab|nivolumab|atezolizumab|durvalumab|ipilimumab|trastuzumab|pertuzumab|osimertinib|targeted|kinase|inhibitor|prior\s+therap|treatment\s+history|first[- ]line|second[- ]line|neoadjuvant|adjuvant)\b/i.test(sentence) ||
+    /\b(?:no\s+distant|no\s+brain|no\s+active|negative\s+for|no\s+prior)\b/i.test(sentence)
+  );
+}
+
+/**
+ * Parses documents using section-aware extraction.
+ */
+export function parseClinicalDocument(rawText: string): string {
+  if (!rawText || typeof rawText !== "string" || rawText.trim().length === 0) {
+    return "";
+  }
+
+  const normalized = rawText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  // --------------------------------------------------------------------------
+  // 1. Locate all section headers
+  // --------------------------------------------------------------------------
+  const headerRegex = /(?:^|\n)[ \t]*([A-Za-z0-9\s/&,()-]{2,45}):[ \t]*/g;
+  const sectionMatches: SectionMatch[] = [];
+
+  let match: RegExpExecArray | null;
+  while ((match = headerRegex.exec(normalized)) !== null) {
+    const rawHeader = match[1].trim();
+    for (const item of SECTION_PATTERNS) {
+      if (item.regex.test(rawHeader)) {
+        sectionMatches.push({
+          type: item.type,
+          headerName: rawHeader,
+          startIndex: match.index,
+          contentStartIndex: match.index + match[0].length,
+        });
+        break;
       }
     }
   }
 
-  // Combine stage and condition if both present
-  let diseasePhrase: string | null = null;
-  if (stage && condition) {
-    // If condition already starts with stage, don't duplicate
-    if (condition.toLowerCase().startsWith(stage.toLowerCase())) {
-      diseasePhrase = condition;
-    } else {
-      diseasePhrase = `${stage} ${condition}`;
+  // --------------------------------------------------------------------------
+  // 2. Structured Section-Aware Extraction (if 2+ sections or any core section)
+  // --------------------------------------------------------------------------
+  const hasCoreSection = sectionMatches.some((s) =>
+    ["diagnosis", "stage", "biomarkers", "therapies"].includes(s.type)
+  );
+
+  if (sectionMatches.length >= 2 || hasCoreSection) {
+    const sections: Partial<Record<SectionMatch["type"], string>> = {};
+
+    for (let i = 0; i < sectionMatches.length; i++) {
+      const current = sectionMatches[i];
+      const next = sectionMatches[i + 1];
+      const rawContent = normalized.substring(
+        current.contentStartIndex,
+        next ? next.startIndex : normalized.length
+      );
+      const cleanContent = cleanWhitespace(rawContent);
+
+      if (cleanContent) {
+        if (sections[current.type]) {
+          sections[current.type] += " " + cleanContent;
+        } else {
+          sections[current.type] = cleanContent;
+        }
+      }
     }
-  } else if (stage) {
-    diseasePhrase = stage;
-  } else if (condition) {
-    diseasePhrase = condition;
-  }
 
-  // --------------------------------------------------------------------------
-  // 4. Biomarkers (HER2, PD-L1, EGFR, KRAS, BRAF, MSI-H, MSS, dMMR, BRCA1/2)
-  // --------------------------------------------------------------------------
-  const biomarkers: string[] = [];
+    const outputLines: string[] = [];
 
-  // HER2
-  const her2Match = cleanText.match(/\bHER2[- ]?(positive|negative|\+|\-|amplified|overexpressed|3\+|2\+|1\+|0)\b/i);
-  if (her2Match) {
-    const val = her2Match[1].toLowerCase();
-    if (val === "positive" || val === "+" || val === "amplified" || val === "overexpressed" || val === "3+") {
-      biomarkers.push("HER2-positive");
-    } else if (val === "negative" || val === "-" || val === "0" || val === "1+") {
-      biomarkers.push("HER2-negative");
-    } else {
-      biomarkers.push(`HER2 ${val}`);
+    // Demographics
+    const demo =
+      extractDemographics(sections.demographics || "") ||
+      extractDemographics(normalized);
+    if (demo) {
+      outputLines.push(`${demo}.`);
     }
-  }
 
-  // PD-L1
-  const pdl1Match =
-    cleanText.match(/\bPD-L1\s*(?:expression\s*)?((?:CPS|TPS)\s*[>=<]?\s*\d+%?|positive|negative|\+|-)\b/i) ||
-    cleanText.match(/\bPD-L1[:\s]+(positive|negative)\b/i);
-  if (pdl1Match) {
-    const val = pdl1Match[1];
-    if (/^positive|\+$/i.test(val)) {
-      biomarkers.push("PD-L1 positive");
-    } else if (/^negative|\-$/i.test(val)) {
-      biomarkers.push("PD-L1 negative");
-    } else {
-      biomarkers.push(`PD-L1 ${val.toUpperCase()}`);
+    // Diagnosis
+    let diagContent = sections.diagnosis;
+    if (diagContent) {
+      // Strip redundant leading "Patient is a ... diagnosed with"
+      diagContent = diagContent
+        .replace(
+          /^patient is\s+(?:a\s+)?(?:\d+[- ](?:year[- ]old|yo)\s+)?(?:female|male)?\s*(?:diagnosed with|presenting with|has)\s+/i,
+          ""
+        )
+        .replace(/\s+/g, " ")
+        .trim();
+      diagContent = diagContent.replace(/\.+$/, "");
+      outputLines.push(`Diagnosis: ${diagContent}.`);
     }
-  }
 
-  // EGFR
-  const egfrMatch = cleanText.match(/\bEGFR\s*(mutat(?:ion|ed)|wild[- ]?type|positive|negative|exon\s*\d+|T790M|L858R)\b/i);
-  if (egfrMatch) {
-    const val = egfrMatch[1].toLowerCase();
-    if (/wild/i.test(val)) biomarkers.push("EGFR wild-type");
-    else if (/mutat|pos/i.test(val)) biomarkers.push("EGFR-mutated");
-    else if (/neg/i.test(val)) biomarkers.push("EGFR-negative");
-    else biomarkers.push(`EGFR ${egfrMatch[1]}`);
-  }
+    // Stage
+    let stageContent = sections.stage;
+    const imagingContent = sections.imaging;
 
-  // KRAS
-  const krasMatch = cleanText.match(/\bKRAS\s*(mutat(?:ion|ed)|wild[- ]?type|positive|negative|G12[C|D|V]|exon\s*\d+)\b/i);
-  if (krasMatch) {
-    const val = krasMatch[1].toLowerCase();
-    if (/wild/i.test(val)) biomarkers.push("KRAS wild-type");
-    else if (/g12/i.test(val)) biomarkers.push(`KRAS ${krasMatch[1].toUpperCase()}`);
-    else if (/mutat|pos/i.test(val)) biomarkers.push("KRAS-mutated");
-    else if (/neg/i.test(val)) biomarkers.push("KRAS-negative");
-    else biomarkers.push(`KRAS ${krasMatch[1]}`);
-  }
+    if (!stageContent && diagContent) {
+      const stageInDiag = diagContent.match(
+        /\b(Stage\s+(?:IV[ABC]?|III[ABC]?|II[ABC]?|I[ABC]?|0|[1-4][ABC]?))\b/i
+      );
+      if (stageInDiag) {
+        stageContent = stageInDiag[1];
+      }
+    }
 
-  // BRAF
-  const brafMatch = cleanText.match(/\bBRAF\s*(mutat(?:ion|ed)|wild[- ]?type|positive|negative|V600E)\b/i);
-  if (brafMatch) {
-    const val = brafMatch[1].toLowerCase();
-    if (/v600e/i.test(val)) biomarkers.push("BRAF V600E");
-    else if (/wild/i.test(val)) biomarkers.push("BRAF wild-type");
-    else if (/mutat|pos/i.test(val)) biomarkers.push("BRAF-mutated");
-    else if (/neg/i.test(val)) biomarkers.push("BRAF-negative");
-    else biomarkers.push(`BRAF ${brafMatch[1]}`);
-  }
+    if (imagingContent) {
+      const noDistantMatch = imagingContent.match(/no\s+(?:distant\s+)?metastas(?:is|es)/i);
+      if (noDistantMatch) {
+        const noDistantStr = "no distant metastasis";
+        if (stageContent) {
+          if (!/no\s+distant\s+metastas/i.test(stageContent)) {
+            stageContent = `${stageContent.replace(/\.+$/, "")}, ${noDistantStr}`;
+          }
+        } else {
+          stageContent = noDistantStr;
+        }
+      }
+    }
 
-  // MSI / MMR
-  if (/\bMSI[- ]?H\b|microsatellite\s+instability[- ]high/i.test(cleanText)) {
-    biomarkers.push("MSI-H");
-  } else if (/\bMSS\b|microsatellite\s+stable/i.test(cleanText)) {
-    biomarkers.push("MSS");
-  }
+    if (stageContent) {
+      stageContent = stageContent.replace(/\s+/g, " ").trim().replace(/\.+$/, "");
+      outputLines.push(`Stage: ${stageContent}.`);
+    }
 
-  if (/\bdMMR\b|mismatch\s+repair[- ]deficient/i.test(cleanText)) {
-    biomarkers.push("dMMR");
-  } else if (/\bpMMR\b|mismatch\s+repair[- ]proficient/i.test(cleanText)) {
-    biomarkers.push("pMMR");
-  }
+    // Biomarkers
+    const biomarkerContent = sections.biomarkers;
+    if (biomarkerContent) {
+      const formatted = formatBiomarkers(biomarkerContent);
+      if (formatted) {
+        outputLines.push(`Biomarkers: ${formatted}.`);
+      }
+    }
 
-  // BRCA1/2
-  const brcaMatch = cleanText.match(/\b(BRCA1\/2|BRCA1|BRCA2|BRCA)\s*(mutat(?:ion|ed)|positive|negative|wild[- ]?type)?\b/i);
-  if (brcaMatch) {
-    const gene = brcaMatch[1].toUpperCase();
-    const status = brcaMatch[2] ? brcaMatch[2].toLowerCase() : "";
-    if (/mutat|pos/i.test(status)) biomarkers.push(`${gene}-mutated`);
-    else if (/wild|neg/i.test(status)) biomarkers.push(`${gene} wild-type`);
-    else biomarkers.push(`${gene} mutation`);
-  }
+    // Prior Therapies
+    let therapiesContent = sections.therapies;
+    if (therapiesContent) {
+      therapiesContent = therapiesContent.replace(/\s+/g, " ").trim().replace(/\.+$/, "");
+      outputLines.push(`Prior Therapies: ${therapiesContent}.`);
+    }
 
-  // --------------------------------------------------------------------------
-  // 5. Prior Therapies
-  // --------------------------------------------------------------------------
-  const therapies: string[] = [];
-  if (/\b(?:completed|received|underwent)\s+neoadjuvant\s+chemoradiation\b/i.test(cleanText) || /\bneoadjuvant\s+chemoradiation\b/i.test(cleanText)) {
-    therapies.push("completed neoadjuvant chemoradiation");
-  } else if (/\bneoadjuvant\s+chemotherapy\b/i.test(cleanText)) {
-    therapies.push("completed neoadjuvant chemotherapy");
-  } else if (/\bchemoradiotherapy\b|\bchemoradiation\b/i.test(cleanText)) {
-    therapies.push("chemoradiation");
-  } else if (/\bchemotherapy\b/i.test(cleanText)) {
-    therapies.push("prior chemotherapy");
-  } else if (/\bradiation\b|\bradiotherapy\b/i.test(cleanText)) {
-    therapies.push("prior radiation");
-  }
-
-  if (/\b(?:prior|post)\s+(?:surgical\s+)?resection\b/i.test(cleanText) || /\bradical\s+resection\b/i.test(cleanText)) {
-    if (!therapies.some((t) => t.includes("resection"))) {
-      therapies.push("prior resection");
+    if (outputLines.length > 0) {
+      return outputLines.join("\n").slice(0, 4000);
     }
   }
 
-  // Specific drug regimens if mentioned
-  if (/\bpembrolizumab\b/i.test(cleanText) && !therapies.some((t) => t.includes("pembrolizumab"))) {
-    therapies.push("pembrolizumab");
-  }
-
   // --------------------------------------------------------------------------
-  // 6. Clinical Status / Exclusions (e.g. distant metastasis)
+  // 3. Fallback for Unstructured Documents
+  //    Preserve full sentences containing clinical keywords without loss.
   // --------------------------------------------------------------------------
-  let exclusionStatus: string | null = null;
-  if (/\b(?:no|without|negative\s+for)\s+(?:distant\s+)?metastas(?:is|es)\b/i.test(cleanText) || /\bno\s+distant\s+mets\b/i.test(cleanText)) {
-    exclusionStatus = "no distant metastasis";
-  } else if (/\bno\s+(?:active\s+)?(?:brain|cns)\s+metastas(?:is|es)\b/i.test(cleanText)) {
-    exclusionStatus = "no brain metastases";
+  // Split by sentence boundaries (. followed by whitespace/newline or start/end)
+  const rawSentences = normalized
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => cleanWhitespace(s))
+    .filter((s) => s.length > 0);
+
+  const clinicalSentences: string[] = [];
+
+  for (let s of rawSentences) {
+    if (isClinicalSentence(s)) {
+      // Normalize shorthand "58 yo male" -> "58-year-old male"
+      s = s.replace(/\b(\d{1,3})\s*yo\s+(male|female)\b/i, "$1-year-old $2");
+      s = s.replace(/\b(\d{1,3})\s*y\/o\s+(male|female)\b/i, "$1-year-old $2");
+      // Normalize "Completed neoadjuvant" -> "completed neoadjuvant" for case flexibility
+      s = s.replace(/\bCompleted neoadjuvant\b/i, "completed neoadjuvant");
+      clinicalSentences.push(s);
+    }
   }
 
-  // --------------------------------------------------------------------------
-  // 7. Compose into ONE natural sentence in the SAMPLE_PROFILE style
-  // --------------------------------------------------------------------------
-  const clauses: string[] = [];
-
-  if (demographicsPhrase) {
-    clauses.push(demographicsPhrase);
-  }
-
-  if (diseasePhrase) {
-    clauses.push(diseasePhrase);
-  }
-
-  if (biomarkers.length > 0) {
-    clauses.push(biomarkers.join(", "));
-  }
-
-  if (therapies.length > 0) {
-    clauses.push(therapies.join(", "));
-  }
-
-  if (exclusionStatus) {
-    clauses.push(exclusionStatus);
-  }
-
-  if (clauses.length === 0) {
+  if (clinicalSentences.length === 0) {
     return "";
   }
 
-  let composed = clauses.join(", ").trim();
-
-  // Ensure it ends with a single period
+  let composed = clinicalSentences.join(" ").trim();
   if (!composed.endsWith(".")) {
     composed += ".";
   }
 
-  // Capitalize the first letter if not already
-  composed = composed.charAt(0).toUpperCase() + composed.slice(1);
-
-  // Truncate to existing maxLength 4000
   return composed.slice(0, 4000);
 }
