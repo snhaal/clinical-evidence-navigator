@@ -178,3 +178,98 @@ async def test_search_studies_auto_relaxes_query_on_zero_results(monkeypatch):
     # The second call dropped query.term
     assert "query.term" not in calls[1]
     assert calls[1]["query.cond"] == "thoracic esophageal squamous cell carcinoma"
+
+
+def test_sanitize_query_term():
+    from app.adapters.clinicaltrials import ClinicalTrialsClient
+
+    # Strips special parser-breaking characters [()%:;,/+=<>]
+    raw = "Stage IVB (chemotherapy: cisplatin + pemetrexed) 45% [tested] <pos> / = ;"
+    sanitized = ClinicalTrialsClient._sanitize_query_term(raw)
+    assert "%" not in sanitized
+    assert "(" not in sanitized
+    assert ")" not in sanitized
+    assert "+" not in sanitized
+    assert ":" not in sanitized
+    assert ";" not in sanitized
+    assert "/" not in sanitized
+    assert "=" not in sanitized
+    assert "<" not in sanitized
+    assert ">" not in sanitized
+
+    # Truncates to at most 4-5 keywords
+    assert len(sanitized.split()) <= 5
+
+    # Enforces maximum 60 characters
+    assert len(sanitized) <= 60
+
+    # Handles empty / pure special characters
+    assert ClinicalTrialsClient._sanitize_query_term("   ") == ""
+    assert ClinicalTrialsClient._sanitize_query_term("%%++(())//") == ""
+
+
+@pytest.mark.asyncio
+async def test_search_studies_falls_back_to_cond_on_400_error(monkeypatch):
+    """
+    If ClinicalTrials.gov responds with HTTP 400 and query.term was present,
+    it must log a warning and immediately retry using only query.cond.
+    """
+    from app.adapters.clinicaltrials import ClinicalTrialsAPIError, ClinicalTrialsClient
+
+    client = ClinicalTrialsClient()
+    calls = []
+
+    async def fake_fetch(params):
+        calls.append(dict(params))
+        # Simulate ClinicalTrials.gov returning 400 when query.term is in params
+        if "query.term" in params:
+            raise ClinicalTrialsAPIError(
+                "ClinicalTrials.gov returned an error (status 400).", status_code=400
+            )
+        return [SAMPLE_STUDY]
+
+    monkeypatch.setattr(client, "_fetch_studies", fake_fetch)
+
+    studies = await client.search_studies(
+        {
+            "query.cond": "non-small cell lung cancer",
+            "query.term": "Stage IVB EGFR Exon 19 deletion ALK",
+            "filter.overallStatus": "RECRUITING",
+        }
+    )
+
+    assert len(studies) == 1
+    assert len(calls) == 2
+    # First call contained query.term
+    assert "query.term" in calls[0]
+    # Fallback call dropped query.term and kept query.cond
+    assert "query.term" not in calls[1]
+    assert calls[1]["query.cond"] == "non-small cell lung cancer"
+    assert calls[1]["filter.overallStatus"] == "RECRUITING"
+
+
+@pytest.mark.asyncio
+async def test_search_studies_raises_400_if_no_query_term(monkeypatch):
+    """
+    If ClinicalTrials.gov responds with 400 and query.term was NOT present,
+    the error should be raised normally rather than retrying.
+    """
+    from app.adapters.clinicaltrials import ClinicalTrialsAPIError, ClinicalTrialsClient
+
+    client = ClinicalTrialsClient()
+
+    async def fake_fetch(params):
+        raise ClinicalTrialsAPIError(
+            "ClinicalTrials.gov returned an error (status 400).", status_code=400
+        )
+
+    monkeypatch.setattr(client, "_fetch_studies", fake_fetch)
+
+    with pytest.raises(ClinicalTrialsAPIError):
+        await client.search_studies(
+            {
+                "query.cond": "malformed syntax",
+                "filter.overallStatus": "RECRUITING",
+            }
+        )
+

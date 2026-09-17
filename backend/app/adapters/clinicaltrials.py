@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 class ClinicalTrialsAPIError(Exception):
     """Raised on timeout, non-2xx response, or malformed payload from ClinicalTrials.gov."""
 
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class ClinicalTrialsClient:
     def __init__(self) -> None:
@@ -28,6 +32,29 @@ class ClinicalTrialsClient:
         self._base_url = settings.clinicaltrials_api_base
         self._timeout = settings.request_timeout_seconds
         self._max_results = settings.max_trials_per_query
+
+    @staticmethod
+    def _sanitize_query_term(term: str) -> str:
+        """
+        Sanitizes and truncates query.term for the ClinicalTrials.gov query parser:
+        - Strips characters that break the parser: [()%:;,/+=<>]
+        - Truncates to at most 4-5 keywords
+        - Enforces maximum 60 characters
+        """
+        cleaned = re.sub(r"[()%:;,/+=<>]", " ", term)
+        words = cleaned.split()
+        if not words:
+            return ""
+        if len(words) > 5:
+            words = words[:5]
+        truncated = " ".join(words)
+        if len(truncated) > 60:
+            truncated = (
+                truncated[:60].rsplit(" ", 1)[0].strip()
+                if " " in truncated[:60]
+                else truncated[:60].strip()
+            )
+        return truncated
 
     @staticmethod
     def _extract_root_condition(condition: str) -> str:
@@ -73,7 +100,8 @@ class ClinicalTrialsClient:
                 exc.response.text,
             )
             raise ClinicalTrialsAPIError(
-                f"ClinicalTrials.gov returned an error (status {exc.response.status_code})."
+                f"ClinicalTrials.gov returned an error (status {exc.response.status_code}).",
+                status_code=exc.response.status_code,
             ) from exc
 
         try:
@@ -107,7 +135,28 @@ class ClinicalTrialsClient:
         }
         # Ensure filter.overallStatus is always RECRUITING
         params["filter.overallStatus"] = "RECRUITING"
-        studies = await self._fetch_studies(params)
+
+        # Sanitize and guard query.term against parser-breaking characters and length
+        if "query.term" in params and params["query.term"]:
+            sanitized_term = self._sanitize_query_term(params["query.term"])
+            if sanitized_term:
+                params["query.term"] = sanitized_term
+            else:
+                params.pop("query.term", None)
+
+        try:
+            studies = await self._fetch_studies(params)
+        except ClinicalTrialsAPIError as exc:
+            # Graceful Fallback: If ClinicalTrials.gov returns 400 and query.term was present,
+            # retry immediately using only query.cond to ensure retrieval doesn't crash the pipeline.
+            if (exc.status_code == 400 or "status 400" in str(exc)) and "query.term" in params:
+                logger.warning(
+                    "ClinicalTrials.gov 400 for query.term; falling back to query.cond only"
+                )
+                fallback_params = {k: v for k, v in params.items() if k != "query.term"}
+                studies = await self._fetch_studies(fallback_params)
+            else:
+                raise
 
         # Automatic query relaxation fallback:
         # If the initial request returns 0 candidate studies, do not immediately return empty results.
