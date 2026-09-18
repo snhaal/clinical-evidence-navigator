@@ -186,8 +186,10 @@ class ClinicalTrialsClient:
         # Ensure filter.overallStatus is always RECRUITING
         params["filter.overallStatus"] = "RECRUITING"
 
+        # Remove internal Python flags so they are NEVER forwarded as HTTP query params
         has_actionable_biomarker = bool(
-            query_params.get("has_actionable_biomarker")
+            params.pop("has_actionable_biomarker", None)
+            or query_params.get("has_actionable_biomarker")
             or (
                 query_params.get("query.term")
                 and any(
@@ -204,6 +206,7 @@ class ClinicalTrialsClient:
         # When an actionable biomarker is present, keep query.cond clean as primary condition
         cond = params.get("query.cond", "")
         stage = params.pop("stage", None) or query_params.get("query.stage")
+        params.pop("query.stage", None)
         if not has_actionable_biomarker and cond and stage and " AND " not in cond:
             params["query.cond"] = self.build_stage_aware_query(cond, stage)
 
@@ -214,6 +217,19 @@ class ClinicalTrialsClient:
                 params["query.term"] = sanitized_term
             else:
                 params.pop("query.term", None)
+
+        # Whitelist strictly valid ClinicalTrials.gov REST v2 parameters
+        valid_ct_params = {
+            "query.cond",
+            "query.term",
+            "filter.overallStatus",
+            "pageSize",
+            "format",
+            "pageToken",
+            "sort",
+            "countTotal",
+        }
+        params = {k: v for k, v in params.items() if k in valid_ct_params and v is not None}
 
         try:
             studies = await self._fetch_studies(params)

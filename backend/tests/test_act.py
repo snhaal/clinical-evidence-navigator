@@ -512,6 +512,38 @@ async def test_search_studies_fetches_20_and_broadens_with_stage(monkeypatch):
     assert calls[0]["query.cond"] == '"Triple Negative Breast Cancer" AND ("metastatic" OR "advanced" OR "Stage IV")'
 
 
+@pytest.mark.asyncio
+async def test_search_studies_removes_internal_flags_from_http_params(monkeypatch):
+    from app.adapters.clinicaltrials import ClinicalTrialsClient
+
+    client = ClinicalTrialsClient()
+    calls = []
+
+    async def fake_fetch(params):
+        calls.append(dict(params))
+        return [SAMPLE_STUDY]
+
+    monkeypatch.setattr(client, "_fetch_studies", fake_fetch)
+
+    await client.search_studies({
+        "query.cond": "Non-small cell lung cancer",
+        "query.term": "EGFR",
+        "has_actionable_biomarker": True,
+        "stage": "Stage IV",
+        "filter.overallStatus": "RECRUITING",
+    })
+
+    assert len(calls) == 1
+    sent_params = calls[0]
+    assert "has_actionable_biomarker" not in sent_params
+    assert "stage" not in sent_params
+    assert sent_params["query.cond"] == "Non-small cell lung cancer"
+    assert sent_params["query.term"] == "EGFR"
+    assert sent_params["filter.overallStatus"] == "RECRUITING"
+    assert sent_params["pageSize"] == 20
+    assert sent_params["format"] == "json"
+
+
 def test_stage_alignment_penalizes_neoadjuvant_and_resectable_for_stage_iv():
     stage_iv_query = StructuredQuery(
         condition="Triple Negative Breast Cancer",
