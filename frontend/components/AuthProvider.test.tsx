@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { AuthProvider, useAuth } from "./AuthProvider";
+import { AuthProvider, GUEST_STORAGE_KEY, useAuth } from "./AuthProvider";
 
 // Mock supabase client
 let authChangeCallback: ((event: string, session: any) => void) | null = null;
@@ -56,7 +56,7 @@ describe("AuthProvider Component", () => {
     mockSignOut.mockResolvedValue({ error: null });
   });
 
-  it("initializes with unauthenticated state when no session exists", async () => {
+  it("initializes with unauthenticated state and does NOT auto-assign guest mode to first-time visitors", async () => {
     render(
       <AuthProvider>
         <TestConsumer />
@@ -71,9 +71,10 @@ describe("AuthProvider Component", () => {
 
     expect(screen.getByTestId("user-email")).toHaveTextContent("no-user");
     expect(screen.getByTestId("is-guest")).toHaveTextContent("not-guest");
+    expect(localStorage.getItem(GUEST_STORAGE_KEY)).toBeNull();
   });
 
-  it("enables guest mode and persists flag in localStorage via continueAsGuest", async () => {
+  it("enables guest mode and persists guest_acknowledged flag via continueAsGuest", async () => {
     const user = userEvent.setup();
     render(
       <AuthProvider>
@@ -88,11 +89,11 @@ describe("AuthProvider Component", () => {
     await user.click(screen.getByTestId("guest-btn"));
 
     expect(screen.getByTestId("is-guest")).toHaveTextContent("guest");
-    expect(localStorage.getItem("cen_guest_mode")).toBe("true");
+    expect(localStorage.getItem("guest_acknowledged")).toBe("true");
   });
 
-  it("restores guest mode on mount when localStorage flag is present", async () => {
-    localStorage.setItem("cen_guest_mode", "true");
+  it("restores guest mode on mount when guest_acknowledged flag is present in localStorage", async () => {
+    localStorage.setItem("guest_acknowledged", "true");
 
     render(
       <AuthProvider>
@@ -147,14 +148,15 @@ describe("AuthProvider Component", () => {
 
     expect(screen.getByTestId("user-email")).toHaveTextContent("researcher@lab.org");
     expect(screen.getByTestId("is-guest")).toHaveTextContent("not-guest");
-    expect(localStorage.getItem("cen_guest_mode")).toBeNull();
+    expect(localStorage.getItem("guest_acknowledged")).toBeNull();
   });
 
-  it("handles signOut cleanly", async () => {
+  it("handles signOut cleanly and clears persistent guest_acknowledged flag", async () => {
     const user = userEvent.setup();
     const fakeUser = { id: "u-789", email: "doc@health.org" };
     const fakeSession = { user: fakeUser, access_token: "jwt-789" };
     mockGetSession.mockResolvedValueOnce({ data: { session: fakeSession } });
+    localStorage.setItem("guest_acknowledged", "true");
 
     render(
       <AuthProvider>
@@ -171,5 +173,6 @@ describe("AuthProvider Component", () => {
     expect(mockSignOut).toHaveBeenCalled();
     expect(screen.getByTestId("user-email")).toHaveTextContent("no-user");
     expect(screen.getByTestId("is-guest")).toHaveTextContent("not-guest");
+    expect(localStorage.getItem("guest_acknowledged")).toBeNull();
   });
 });

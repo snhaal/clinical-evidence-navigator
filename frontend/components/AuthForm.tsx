@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "./AuthProvider";
@@ -19,7 +19,14 @@ export function AuthForm({ initialMode }: AuthFormProps) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const router = useRouter();
-  const { continueAsGuest } = useAuth();
+  const { user, isLoading, continueAsGuest } = useAuth();
+
+  // Already authenticated users are redirected to home; guests remain on login
+  useEffect(() => {
+    if (!isLoading && user) {
+      router.replace("/");
+    }
+  }, [isLoading, user, router]);
 
   const handleGuest = () => {
     continueAsGuest();
@@ -253,6 +260,10 @@ export function AuthForm({ initialMode }: AuthFormProps) {
       >
         Continue as Guest
       </button>
+
+      <p className="mt-2 text-center text-xs text-muted/80 leading-normal">
+        Guest mode allows full trial matching, but search history and saved patient dossiers will not be saved.
+      </p>
     </div>
   );
 }

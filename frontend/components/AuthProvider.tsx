@@ -4,7 +4,8 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
-const GUEST_STORAGE_KEY = "cen_guest_mode";
+export const GUEST_STORAGE_KEY = "guest_acknowledged";
+const LEGACY_GUEST_STORAGE_KEY = "cen_guest_mode";
 
 export interface AuthContextType {
   user: User | null;
@@ -35,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsGuest(false);
         try {
           localStorage.removeItem(GUEST_STORAGE_KEY);
+          localStorage.removeItem(LEGACY_GUEST_STORAGE_KEY);
         } catch {
           // Ignore localStorage errors (e.g. private browsing restrictions)
         }
@@ -42,7 +44,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(null);
         setUser(null);
         try {
-          const storedGuest = localStorage.getItem(GUEST_STORAGE_KEY) === "true";
+          const storedGuest =
+            localStorage.getItem(GUEST_STORAGE_KEY) === "true" ||
+            localStorage.getItem(LEGACY_GUEST_STORAGE_KEY) === "true";
           setIsGuest(storedGuest);
         } catch {
           setIsGuest(false);
@@ -61,6 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsGuest(false);
         try {
           localStorage.removeItem(GUEST_STORAGE_KEY);
+          localStorage.removeItem(LEGACY_GUEST_STORAGE_KEY);
         } catch {
           // ignore
         }
@@ -68,7 +73,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(null);
         setUser(null);
         try {
-          const storedGuest = localStorage.getItem(GUEST_STORAGE_KEY) === "true";
+          const storedGuest =
+            localStorage.getItem(GUEST_STORAGE_KEY) === "true" ||
+            localStorage.getItem(LEGACY_GUEST_STORAGE_KEY) === "true";
           setIsGuest(storedGuest);
         } catch {
           setIsGuest(false);
@@ -87,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsGuest(true);
     try {
       localStorage.setItem(GUEST_STORAGE_KEY, "true");
+      localStorage.removeItem(LEGACY_GUEST_STORAGE_KEY);
     } catch {
       // ignore
     }
@@ -103,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsGuest(false);
       try {
         localStorage.removeItem(GUEST_STORAGE_KEY);
+        localStorage.removeItem(LEGACY_GUEST_STORAGE_KEY);
       } catch {
         // ignore
       }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { ExportDossierButton } from "@/components/ExportDossierButton";
 import { TrialCard } from "@/components/TrialCard";
@@ -74,67 +75,20 @@ export default function HistoryPage() {
     }
   }
 
-  // 1. Authentication check
-  if (isAuthLoading) {
-    return (
-      <main className="min-h-screen bg-bg px-4 py-16">
-        <div className="mx-auto max-w-reading text-center text-muted">
-          Loading user profile…
-        </div>
-      </main>
-    );
-  }
+  const router = useRouter();
 
-  if (!user) {
+  // Route protection: If unauthenticated, immediately redirect to /login
+  useEffect(() => {
+    if (!isAuthLoading && !user) {
+      router.replace("/login");
+    }
+  }, [isAuthLoading, user, router]);
+
+  if (isAuthLoading || !user) {
     return (
-      <main className="min-h-screen bg-bg px-4 py-16">
-        <div className="mx-auto max-w-reading rounded-sm border border-border bg-surface p-8 text-center shadow-xs">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-accent mb-4">
-            <svg
-              className="h-6 w-6"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-          </div>
-          <h1 className="font-serif text-2xl font-semibold text-ink">
-            Match History Requires an Account
-          </h1>
-          <p className="mt-3 text-sm text-muted leading-relaxed max-w-md mx-auto">
-            Clinical trial evaluation records, criterion verdicts, and PDF dossiers are
-            automatically archived for authenticated accounts. Guests can freely run queries,
-            but query history is not saved.
-          </p>
-          <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link
-              href="/login"
-              className="w-full sm:w-auto rounded-sm bg-accent px-5 py-2 text-sm font-medium text-surface shadow-xs transition-colors hover:bg-accent/90"
-            >
-              Sign In
-            </Link>
-            <Link
-              href="/signup"
-              className="w-full sm:w-auto rounded-sm border border-border bg-surface px-5 py-2 text-sm font-medium text-ink transition-colors hover:bg-border/30"
-            >
-              Create Account
-            </Link>
-          </div>
-          <div className="mt-6 border-t border-border pt-4">
-            <Link
-              href="/"
-              className="text-xs text-muted hover:text-accent underline underline-offset-4"
-            >
-              ← Back to Trial Matching
-            </Link>
-          </div>
+      <main className="min-h-screen bg-bg flex items-center justify-center">
+        <div className="text-sm text-muted animate-pulse font-mono">
+          Redirecting to sign in…
         </div>
       </main>
     );

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 import { BackendStatusBadge } from "@/components/BackendStatusBadge";
 import { Disclaimer } from "@/components/Disclaimer";
 import { ExportDossierButton } from "@/components/ExportDossierButton";
@@ -17,8 +19,18 @@ type ViewState =
   | { status: "error"; message: string };
 
 export default function Home() {
+  const { user, isGuest, isLoading: isAuthLoading } = useAuth();
+  const router = useRouter();
+
   const [state, setState] = useState<ViewState>({ status: "idle" });
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("connecting");
+
+  // Route protection: First-time unauthenticated visitors are redirected to /login
+  useEffect(() => {
+    if (!isAuthLoading && !user && !isGuest) {
+      router.replace("/login");
+    }
+  }, [isAuthLoading, user, isGuest, router]);
 
   const checkBackendStatus = useCallback(async () => {
     setBackendStatus("connecting");
@@ -43,6 +55,16 @@ export default function Home() {
         err instanceof ApiError ? err.message : "Something unexpected went wrong. Please try again.";
       setState({ status: "error", message });
     }
+  }
+
+  if (isAuthLoading || (!user && !isGuest)) {
+    return (
+      <main className="min-h-screen bg-bg flex items-center justify-center">
+        <div className="text-sm text-muted animate-pulse font-mono">
+          Verifying access credentials…
+        </div>
+      </main>
+    );
   }
 
   return (
