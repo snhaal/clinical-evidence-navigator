@@ -76,9 +76,10 @@ def create_app() -> FastAPI:
             ),
         }
 
-    # Clinical Trial Matching & Verification Endpoint
+    # Clinical Trial Matching, Verification & History Endpoints
     app.include_router(match_router)
     app.include_router(match_router, prefix="/api")
+    app.include_router(match_router, prefix="/api/v1")
 
     return app
 

@@ -1,4 +1,10 @@
-import type { ApiErrorShape, MatchResponse } from "./types";
+import { supabase } from "./supabase";
+import type {
+  ApiErrorShape,
+  HistoryDetailResponse,
+  HistoryListResponse,
+  MatchResponse,
+} from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -12,6 +18,24 @@ export class ApiError extends Error {
     this.status = status;
     this.name = "ApiError";
   }
+}
+
+/**
+ * Retrieves Authorization header containing Bearer token if an active
+ * Supabase session exists. If unauthenticated or in guest mode, returns empty object.
+ */
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      return { Authorization: `Bearer ${session.access_token}` };
+    }
+  } catch {
+    // Guest mode or error reading session
+  }
+  return {};
 }
 
 /**
@@ -45,17 +69,20 @@ export async function pingBackend(): Promise<boolean> {
 }
 
 /**
- * Calls POST /match. Throws ApiError with a specific, user-facing message
- * on any non-2xx response — the UI must show that message rather than a
- * generic failure, per the backend's "visible, specific error state" NFR.
+ * Calls POST /match. Attaches Bearer token if logged in, or omits for guest mode.
+ * Throws ApiError with a specific, user-facing message on non-2xx response.
  */
 export async function matchPatientProfile(patientProfile: string): Promise<MatchResponse> {
   let response: Response;
+  const authHeaders = await getAuthHeaders();
 
   try {
     response = await fetch(`${API_BASE_URL}/match`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+      },
       body: JSON.stringify({ patient_profile: patientProfile }),
     });
   } catch {
@@ -77,4 +104,74 @@ export async function matchPatientProfile(patientProfile: string): Promise<Match
   }
 
   return (await response.json()) as MatchResponse;
+}
+
+/**
+ * Fetches paginated history for the authenticated user.
+ */
+export async function fetchHistory(limit = 20, offset = 0): Promise<HistoryListResponse> {
+  const authHeaders = await getAuthHeaders();
+  if (!authHeaders.Authorization) {
+    throw new ApiError("You must be signed in to view match history.", 401);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/v1/history?limit=${limit}&offset=${offset}`, {
+      method: "GET",
+      headers: {
+        ...authHeaders,
+      },
+    });
+  } catch {
+    throw new ApiError("Failed to connect to history service.", 0);
+  }
+
+  if (!response.ok) {
+    let detail = `Failed to fetch history (Status ${response.status}).`;
+    try {
+      const errorBody = (await response.json()) as ApiErrorShape;
+      if (errorBody?.detail) detail = errorBody.detail;
+    } catch {
+      // non-json response
+    }
+    throw new ApiError(detail, response.status);
+  }
+
+  return (await response.json()) as HistoryListResponse;
+}
+
+/**
+ * Fetches full details for a specific historical match run.
+ */
+export async function fetchHistoryDetail(matchRunId: string): Promise<HistoryDetailResponse> {
+  const authHeaders = await getAuthHeaders();
+  if (!authHeaders.Authorization) {
+    throw new ApiError("You must be signed in to view match run details.", 401);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/v1/history/${matchRunId}`, {
+      method: "GET",
+      headers: {
+        ...authHeaders,
+      },
+    });
+  } catch {
+    throw new ApiError("Failed to connect to history service.", 0);
+  }
+
+  if (!response.ok) {
+    let detail = `Failed to load match run details (Status ${response.status}).`;
+    try {
+      const errorBody = (await response.json()) as ApiErrorShape;
+      if (errorBody?.detail) detail = errorBody.detail;
+    } catch {
+      // non-json response
+    }
+    throw new ApiError(detail, response.status);
+  }
+
+  return (await response.json()) as HistoryDetailResponse;
 }

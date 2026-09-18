@@ -11,6 +11,7 @@
     "postinstall": "node -e \"const fs=require('fs');fs.copyFileSync('node_modules/pdfjs-dist/build/pdf.worker.min.mjs','public/pdf.worker.min.mjs')\""
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "mammoth": "^1.12.3",

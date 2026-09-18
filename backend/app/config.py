@@ -64,6 +64,25 @@ class Settings(BaseSettings):
     max_patient_profile_chars: int = Field(default=4000)
     max_trials_per_query: int = Field(default=10)
 
+    # --- Supabase Auth ----------------------------------------------------
+    supabase_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"),
+        description="Supabase project URL",
+    )
+    supabase_anon_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"
+        ),
+        description="Supabase anonymous API key",
+    )
+    supabase_jwt_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_JWT_SECRET"),
+        description="Supabase JWT secret used to verify bearer tokens",
+    )
+
     # --- Misc -------------------------------------------------------------
     app_url: str = Field(default="http://localhost:3000")
     environment: str = Field(default="development")  # development | production

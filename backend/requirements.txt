@@ -9,3 +9,5 @@ anthropic==0.34.2
 google-genai==2.23.0
 openai==3.13.0
 python-dotenv==1.0.1
+pyjwt[crypto]>=2.8.0
+supabase>=2.8.0

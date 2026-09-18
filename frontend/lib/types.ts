@@ -21,6 +21,7 @@ export interface CriterionVerdict {
   verdict: Verdict;
   rationale: string;
   cited_text: string;
+  evidence_quote?: string | null;
   citation_validated: boolean;
 }
 
@@ -47,6 +48,43 @@ export interface MatchResponse {
 }
 
 export type DossierData = MatchResponse;
+
+export interface HistoryItem {
+  id: string;
+  created_at: string;
+  condition: string;
+  trial_title?: string | null;
+  nct_id?: string | null;
+  top_trials: string[];
+  status: string;
+  overall_verdict?: string | null;
+}
+
+export interface HistoryListResponse {
+  items: HistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface HistoryDetailResponse {
+  id: string;
+  patient_profile_id: string;
+  created_at: string;
+  patient_profile: string;
+  structured_query: StructuredQuery | null;
+  nct_id: string;
+  trial_title: string;
+  overall_verdict: Verdict;
+  satisfied_count: number;
+  unclear_count: number;
+  hard_exclusion_hit: boolean;
+  latency_ms?: number | null;
+  token_cost?: number | null;
+  criterion_verdicts: CriterionVerdict[];
+  trials: TrialMatchSummary[];
+  disclaimer: string;
+}
 
 export interface ApiErrorShape {
   detail: string;

@@ -1,24 +1,31 @@
 """
-The single public endpoint: POST /match.
+The clinical trial matching, verification, and per-user history routes.
 
-Flow: Plan -> (early return if clarification needed) -> Act -> per-trial
+Flow for /match: Plan -> (early return if clarification needed) -> Act -> per-trial
 [Ground -> persist -> Verify] -> Synthesize -> persist match_runs -> respond.
 
-Error handling follows the NFR directly: retrieval or API failures must
-degrade gracefully with a visible, specific error state, never a silent
-empty result. Every stage-specific exception is caught here and mapped to
-an HTTP status with a message that says what actually failed.
+Authentication:
+- /match accepts optional authentication (Guest mode when unauthenticated).
+- /history and /history/{match_run_id} strictly require Supabase authentication.
 """
 
 import asyncio
 import logging
 import time
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.adapters.clinicaltrials import ClinicalTrialsClient
 from app.adapters.tracking import TrackingLLMAdapter
-from app.api.schemas import MatchRequest, MatchResponse
+from app.api.schemas import (
+    HistoryDetailResponse,
+    HistoryItemResponse,
+    HistoryListResponse,
+    MatchRequest,
+    MatchResponse,
+)
+from app.auth import User, get_optional_user, get_required_user
 from app.config import get_settings
 from app.db import get_engine
 from app.pipeline.act import ActStageError, retrieve_candidate_trials
@@ -27,7 +34,12 @@ from app.pipeline.plan import plan_patient_profile
 from app.pipeline.synthesize import synthesize_results
 from app.pipeline.verify import verify_all_criteria
 from app.rate_limit import get_rate_limiter
-from app.repositories.match_runs import insert_criterion_verdicts, insert_match_run
+from app.repositories.match_runs import (
+    get_match_run_detail,
+    get_user_match_history,
+    insert_criterion_verdicts,
+    insert_match_run,
+)
 from app.repositories.patient_profiles import insert_patient_profile
 from app.repositories.trials import insert_trial_criteria, upsert_trial
 
@@ -43,9 +55,14 @@ def _client_ip(request: Request) -> str:
 
 
 @router.post("/match", response_model=MatchResponse)
-async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
+async def match_patient(
+    request: Request,
+    body: MatchRequest,
+    current_user: Annotated[User | None, Depends(get_optional_user)] = None,
+) -> MatchResponse:
     settings = get_settings()
     started_at = time.monotonic()
+    user_id = current_user.id if current_user else None
 
     # --- Rate limiting (Risk: free-tier LLM cost overrun) -----------------
     client_ip = _client_ip(request)
@@ -80,6 +97,7 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
             if plan_result.structured_query
             else None,
             clarifying_question=plan_result.clarifying_question,
+            user_id=user_id,
         )
 
     if plan_result.needs_clarification:
@@ -129,7 +147,6 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
             # Enforce 2.0s cooldown between candidate study verifications to allow rolling token window to clear
             await asyncio.sleep(2.0)
 
-
         async with engine.begin() as conn:
             await upsert_trial(conn, trial)
             criteria = decompose_eligibility_criteria(
@@ -177,6 +194,7 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
                 summary,
                 latency_ms=stats.get("latency_ms"),
                 token_cost=stats.get("token_cost"),
+                user_id=user_id,
             )
             await insert_criterion_verdicts(
                 conn,
@@ -192,3 +210,57 @@ async def match_patient(request: Request, body: MatchRequest) -> MatchResponse:
         trials=summaries,
         latency_ms=int((time.monotonic() - started_at) * 1000),
     )
+
+
+@router.get("/history", response_model=HistoryListResponse)
+async def list_match_history(
+    current_user: Annotated[User, Depends(get_required_user)],
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> HistoryListResponse:
+    """
+    Returns paginated match history strictly for the authenticated user.
+    """
+    engine = get_engine()
+    async with engine.begin() as conn:
+        items_data, total = await get_user_match_history(
+            conn, user_id=current_user.id, limit=limit, offset=offset
+        )
+
+    return HistoryListResponse(
+        items=[HistoryItemResponse(**item) for item in items_data],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/history/{match_run_id}", response_model=HistoryDetailResponse)
+async def get_match_history_detail(
+    match_run_id: str,
+    current_user: Annotated[User, Depends(get_required_user)],
+) -> HistoryDetailResponse:
+    """
+    Retrieves complete execution details: patient profile, full trial evaluation
+    criteria records, reasoning, and verdicts.
+    Enforces tenancy: returns 404 if not found, 403 if user is not the owner.
+    """
+    engine = get_engine()
+    async with engine.begin() as conn:
+        detail_data = await get_match_run_detail(
+            conn, match_run_id=match_run_id, user_id=current_user.id
+        )
+
+    if detail_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Match run '{match_run_id}' not found.",
+        )
+
+    if detail_data.get("forbidden"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You do not have permission to view this match run.",
+        )
+
+    return HistoryDetailResponse(**detail_data)

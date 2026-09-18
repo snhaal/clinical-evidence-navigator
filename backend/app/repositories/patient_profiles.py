@@ -16,12 +16,14 @@ async def insert_patient_profile(
     raw_text: str,
     structured_query: dict | None,
     clarifying_question: str | None,
+    user_id: str | None = None,
 ) -> uuid.UUID:
+    parsed_user_id = uuid.UUID(user_id) if user_id else None
     result = await conn.execute(
         text(
             """
-            insert into patient_profiles (raw_text, structured_query, clarifying_question)
-            values (:raw_text, :structured_query, :clarifying_question)
+            insert into patient_profiles (raw_text, structured_query, clarifying_question, user_id)
+            values (:raw_text, :structured_query, :clarifying_question, :user_id)
             returning id
             """
         ),
@@ -31,6 +33,7 @@ async def insert_patient_profile(
             if structured_query is not None
             else None,
             "clarifying_question": clarifying_question,
+            "user_id": parsed_user_id,
         },
     )
     return result.scalar_one()
