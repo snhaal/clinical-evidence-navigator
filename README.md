@@ -5,7 +5,7 @@
 [![CI](https://github.com/snhaal/clinical-evidence-navigator/actions/workflows/ci.yml/badge.svg)](https://github.com/snhaal/clinical-evidence-navigator/actions/workflows/ci.yml)
 [![Live Demo](https://img.shields.io/badge/demo-online-brightgreen.svg)](https://clinical-evidence-navigator.vercel.app)
 [![API Status](https://img.shields.io/badge/api-active-blue.svg)](https://clinical-evidence-backend-s8vv.onrender.com/health)
-[![Release: v1.2.0](https://img.shields.io/badge/release-v1.2.0-blue.svg)](https://github.com/snhaal/clinical-evidence-navigator/releases/tag/v1.2.0)
+[![Release: v1.3.0](https://img.shields.io/badge/release-v1.3.0-blue.svg)](https://github.com/snhaal/clinical-evidence-navigator/releases/tag/v1.3.0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Live Web Application:** [https://clinical-evidence-navigator.vercel.app](https://clinical-evidence-navigator.vercel.app)  
@@ -21,25 +21,31 @@ Matching cancer patients to clinical trials is traditionally a manual, labor-int
 
 ---
 
-## v1.2.0 Key Capabilities
+## v1.3.0 Key Capabilities
 
-### 1. Client-Side Document Ingestion (Zero-Token & Privacy-Preserving)
-- **Multi-Format Ingestion**: Supports `.pdf`, `.docx`, and `.txt` records up to 15MB directly in the browser via drag-and-drop or file selection.
-- **Client-Side Extraction**: Leverages `pdfjs-dist` (with standalone Web Worker) for PDF text extraction and `mammoth` for Word docx conversions.
-- **Clinical Synthesis**: Extracts and structures core clinical anchors — primary diagnosis, staging nuances (e.g., pleural dissemination, osseous metastasis), complete biomarker panels (EGFR, ALK, ROS1, KRAS, PD-L1 TPS %, HER2), and prior systemic therapy regimens — populating the editable profile textarea with 100% data fidelity.
+### 1. Supabase Auth & Multi-Tenant Data Isolation
+- **Session Tokens & User Isolation**: Integrated Supabase Auth supporting email authentication and persistent session management.
+- **Cryptographic Backend Verification**: Backend verifies both ES256 and RS256 JWT tokens from incoming `Authorization: Bearer <token>` headers to enforce secure tenant boundary isolation.
+- **Guest Mode Support**: Unauthenticated clinicians can evaluate trial eligibility immediately in Guest Mode without sign-in barriers while maintaining zero client-data persistence.
 
-### 2. Client-Side Clinical Dossier PDF Export
-- **Tumor Board Ready**: Generates a professional multi-page Clinical Trial Match Dossier in the clinician's browser using `jspdf` and `jspdf-autotable`.
-- **Criteria Breakdown**: Formats trial match scores, eligibility status, structured criteria verdicts (Met, Not Met, Unclear), and exact verbatim source citations.
-- **Defensive Typography & Pagination**: Features custom text normalization (`cleanPdfText`) to prevent WinAnsi glyph corruption, sanitizes LaTeX math tokens leaked from LLMs, eliminates orphan study headers, and guarantees clean page boundaries across multi-page tables.
+### 2. Per-User Search History & Cascade Deletion
+- **Isolated Query Logs**: Authenticated search executions and criteria verdicts are securely stored in Supabase with user isolation via Row Level Security (RLS).
+- **Evaluation Session Timeline**: Historical trial matches are grouped by evaluation run and timestamp for rapid clinical review and comparison.
+- **Cascade Deletion**: Full user control allowing clinicians to permanently delete entire evaluation sessions and cascade delete all associated trial match records.
 
-### 3. Infrastructure Resilience & Cold-Start Pre-Warming
-- **Automated Backend Pre-Warming**: Dispatches a lightweight background ping (`GET /health` with fallback to `GET /`) upon initial page mount to wake up Render free-tier web services before the user submits.
-- **Header Status Badge**: Real-time status pill providing transparent system visibility:
-  - `🟡 Waking up backend (~30–50s cold start)...` with pulse animation during cold starts.
-  - `🟢 Backend Active` once responsive.
-  - `🔴 Backend Unavailable` with a manual `Retry` button if unreachable.
-- **Rotating Multi-Stage Loading Visualizer**: Displays dynamic real-time progress indicators matching the agentic pipeline stages (0–8s: Query Extraction; 8–18s: Registry Retrieval; 18–32s: Criteria Analysis; 32s+: Evidence Synthesis) with a 30–50s realistic latency notice and elapsed timer.
+### 3. Deterministic Biomarker Retrieval & Evaluation
+- **Biomarker-Targeted Registry Search**: Injects detected actionable driver mutations and biomarkers (e.g., `EGFR`, `HER2`, `KRAS`, `PD-L1`) directly into ClinicalTrials.gov REST v2 parameters (`query.cond` and `query.term`), avoiding generic un-targeted cohort retrievals.
+- **Stage-Aware Candidate Pre-Filtering**: Upstream candidate scoring penalizes early-stage / neoadjuvant trials for Stage IV metastatic patients and excludes trials targeting contradictory driver biomarkers.
+- **Zero-Temperature Evaluation Determinism**: Enforced `temperature=0.0` and fixed seeds (`seed=42`) across Gemini and Groq model adapters, with stable JSON key ordering for reproducible, auditable criteria evaluation across runs.
+
+### 4. Validated Golden-Path Sample Profile
+- **Post-Osimertinib EGFR NSCLC Case**: Default sample profile updated to a verified 62-year-old Stage IV metastatic lung adenocarcinoma patient with EGFR Exon 19 deletion, secondary c-Met amplification, and progression on first-line Osimertinib.
+- **Direct Protocol Matching**: Calibrated against active clinical trials (including NCT07155187) with complete systemic treatment history, RECIST v1.1 measurements, organ function lab thresholds, and documented absence of CNS metastases.
+
+### 5. UI Re-Alignment & Minimalist Clinical Layout
+- **Full-Width Navigation**: Top navigation bar spans 100% viewport width with "Clinical Evidence Navigator" anchored on the far left and auth controls ("History", active email / guest badge, "Sign Out") grouped on the far right.
+- **Relocated Clinical Disclaimer**: Removed top banner and placed a clean, persistent disclaimer in the footer: *"Not a medical device. Not a substitute for clinical judgment."*
+- **Client-Side Document Ingestion & Dossier Export**: Retains zero-token client-side `.pdf`/`.docx`/`.txt` extraction and multi-page tumor board PDF export with automated table pagination.
 
 ---
 
@@ -59,6 +65,8 @@ flowchart TD
         PDF, DOCX, TXT (up to 15MB)`"]
         PARSE["`**⚙️ Deterministic Parser**
         pdfjs-dist / mammoth + clinical regex`"]
+        AUTH["`**🔐 Supabase Auth & History**
+        Session Tokens & Search History`"]
         EDIT["`**📝 Patient Profile Form**
         Extracted Diagnosis, Staging,
         Biomarkers, Prior Therapies`"]
@@ -67,6 +75,8 @@ flowchart TD
     end
 
     subgraph Backend["☁️ Two-Stage Agentic Matcher (FastAPI + Render)"]
+        AUTH_VAL["`**🛡️ Auth & JWT Verification**
+        ES256 / RS256 Bearer Token`"]
         PLAN["`**🧠 Stage 1: Planner Agent**
         Pydantic v2 StructuredQuery
         MeSH Normalization & Sanitization`"]
@@ -79,9 +89,11 @@ flowchart TD
         Verbatim Citations & Match Scoring`"]
     end
 
+    AUTH <--> EDIT
     DOC --> PARSE
     PARSE --> EDIT
-    EDIT -->|"POST /match (profile string)"| PLAN
+    EDIT -->|"POST /match (Bearer JWT)"| AUTH_VAL
+    AUTH_VAL --> PLAN
     PLAN --> ACT
     ACT --> VERIFY
     VERIFY --> SYNTH
@@ -92,8 +104,10 @@ flowchart TD
     style Backend fill:#1e1b4b,stroke:#818cf8,stroke-width:2px,color:#fff
     style DOC fill:#1e293b,stroke:#64748b,color:#fff
     style PARSE fill:#0369a1,stroke:#38bdf8,color:#fff
+    style AUTH fill:#0369a1,stroke:#38bdf8,color:#fff
     style EDIT fill:#047857,stroke:#34d399,color:#fff
     style EXPORT fill:#047857,stroke:#34d399,color:#fff
+    style AUTH_VAL fill:#4338ca,stroke:#818cf8,color:#fff
     style PLAN fill:#4338ca,stroke:#818cf8,color:#fff
     style ACT fill:#15803d,stroke:#4ade80,color:#fff
     style VERIFY fill:#701a75,stroke:#f472b6,color:#fff
@@ -153,8 +167,10 @@ The system decouples **retrieval query planning** from **deep criterion-level ve
 
 ## Baseline vs. Hardened Production Comparison
 
-| Dimension | Baseline Prototype | Hardened Production System (v1.2.0) |
+| Dimension | Baseline Prototype | Hardened Production System (v1.3.0) |
 |---|---|---|
+| **Authentication & History** | None (ephemeral anonymous sessions) | **Supabase Auth (ES256/RS256 JWT), user-isolated history, cascade deletion** |
+| **Biomarker Prioritization** | Naive condition query (unrelated driver trials) | **Biomarker-aware API queries, stage pre-filtering, temperature=0.0 determinism** |
 | **Document Ingestion** | None (manual profile typing only) | **Client-side PDF, DOCX, TXT parser (up to 15MB, 100% private)** |
 | **Clinical Dossier Export** | None | **Tumor-board ready multi-page PDF export with pagination logic** |
 | **Cold-Start Handling** | Silent failure / ~50s unannounced freeze | **Background pre-warming ping + live header status badge** |
@@ -178,9 +194,10 @@ The system decouples **retrieval query planning** from **deep criterion-level ve
 |---|---|---|
 | **Frontend Framework** | [Next.js 14](https://nextjs.org/) (App Router), React 18 | Client & Server Components, fast hydration, static export |
 | **Language & Styling** | TypeScript, [Tailwind CSS](https://tailwindcss.com/) | Strict type safety, clinical design system, responsive badge states |
+| **Authentication & DB** | [Supabase](https://supabase.com/) Auth & Postgres | Session tokens, Row Level Security (RLS), history cascade deletion |
 | **Document Processing** | `pdfjs-dist` (v3.11), `mammoth` (v1.8) | In-browser parsing for `.pdf`, `.docx`, and `.txt` clinical records |
 | **Dossier Generation** | `jspdf` (v4.0), `jspdf-autotable` (v5.0) | Client-side tumor board dossier PDF export with pagination logic |
-| **Testing (Frontend)** | Vitest, React Testing Library | 25 unit and regression tests (parser, dropzone, loading, badge) |
+| **Testing (Frontend)** | Vitest, React Testing Library | 50 passing unit and component tests across 9 suites |
 | **Backend Framework** | [FastAPI](https://fastapi.tiangolo.com/), Python 3.11 / 3.12, Uvicorn | Asynchronous high-throughput REST API |
 | **Data Validation** | [Pydantic v2](https://docs.pydantic.dev/) | Strict JSON schema definitions and type coercion |
 | **LLM Inference** | [Google GenAI SDK](https://github.com/google/generative-ai-python) (`gemini-3.5-flash-lite`) | Native structured JSON generation (250,000 TPM / 500 RPD free tier) |
@@ -278,14 +295,14 @@ pytest tests/ -v
 ```
 *(91 passed unit tests, running fully offline with mocked external fixtures.)*
 
-#### Frontend Test Suite (25 tests)
-Run Vitest covering client-side document parsers, dropzone, loading states, and status badges:
+#### Frontend Test Suite (50 tests)
+Run Vitest covering client-side document parsers, dropzone, loading states, auth provider, history management, and status badges:
 
 ```bash
 cd frontend
 npm run test
 ```
-*(25 passed unit tests.)*
+*(50 passed unit and component tests across 9 suites.)*
 
 ### Benchmark Evaluation
 
@@ -307,6 +324,8 @@ python -u -m evals.run_eval --skip-retrieval
 * [x] **Client-Side Document Ingestion**: In-browser parsing of `.pdf`, `.docx`, and `.txt` clinical records (15MB limit) with zero token leakage.
 * [x] **Client-Side Match Dossier Export**: Downloadable, professional multi-page PDF summaries for oncology multidisciplinary tumor boards.
 * [x] **Cold-Start Resilience**: Proactive backend pre-warming ping and header status badge for serverless/free-tier hosting.
+* [x] **Supabase Authentication & History**: Multi-tenant session tokens, user-isolated search logs, and cascade history deletion.
+* [x] **Biomarker-Aware Registry Search**: Precision targeting for driver mutations (EGFR, HER2, KRAS) with zero-temperature determinism.
 * [ ] **Semantic Vector Search**: Integrate pgvector embeddings for criteria-level cosine similarity to complement keyword retrieval.
 * [ ] **Cross-Trial Criterion Deduplication**: Cluster recurring baseline eligibility criteria (e.g. ECOG scores, organ function lab cutoffs) across multi-center trials to optimize LLM token usage.
 * [ ] **FHIR / USCDI Ingestion**: Direct ingestion of FHIR R4 Patient and Condition resources from sandbox EHR systems.
@@ -315,7 +334,7 @@ python -u -m evals.run_eval --skip-retrieval
 
 ## Safety & Scope Disclaimer
 
-**IMPORTANT DISCLAIMER**: This software is a portfolio engineering project developed for technical demonstration purposes. It is not a medical device, has not undergone clinical validation, and is not a substitute for professional clinical judgment, diagnosis, or treatment planning. All demo profiles use synthetic or anonymized clinical data. Real-world trial enrollment decisions must always be made by licensed healthcare professionals in consultation with patients and trial investigators.
+**IMPORTANT DISCLAIMER**: This application is developed for technical demonstration and research exploration purposes. It is not a medical device, has not undergone clinical validation, and is not a substitute for professional clinical judgment, diagnosis, or treatment planning. All demo profiles use synthetic or anonymized clinical data. Real-world trial enrollment decisions must always be made by licensed healthcare professionals in consultation with patients and trial investigators.
 
 ---
 
