@@ -40,7 +40,10 @@ from app.repositories.match_runs import (
     insert_criterion_verdicts,
     insert_match_run,
 )
-from app.repositories.patient_profiles import insert_patient_profile
+from app.repositories.patient_profiles import (
+    delete_patient_profile,
+    insert_patient_profile,
+)
 from app.repositories.trials import insert_trial_criteria, upsert_trial
 
 logger = logging.getLogger(__name__)
@@ -264,3 +267,33 @@ async def get_match_history_detail(
         )
 
     return HistoryDetailResponse(**detail_data)
+
+
+@router.delete("/history/{profile_id}")
+async def delete_history_session(
+    profile_id: str,
+    current_user: Annotated[User, Depends(get_required_user)],
+) -> dict:
+    """
+    Deletes an evaluation session and all cascade-linked match_runs.
+    Enforces tenancy: returns 404 if not found, 403 if user is not the owner.
+    """
+    engine = get_engine()
+    async with engine.begin() as conn:
+        result = await delete_patient_profile(
+            conn, profile_id=profile_id, user_id=current_user.id
+        )
+
+    if result == "not_found":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Evaluation session '{profile_id}' not found.",
+        )
+
+    if result == "forbidden":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You do not have permission to delete this record.",
+        )
+
+    return {"deleted": True, "patient_profile_id": profile_id}

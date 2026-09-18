@@ -31,15 +31,16 @@ class ClinicalTrialsClient:
         settings = get_settings()
         self._base_url = settings.clinicaltrials_api_base
         self._timeout = settings.request_timeout_seconds
-        self._max_results = settings.max_trials_per_query
+        # Fetch a robust pool of 15-20 candidates for pre-ranking
+        self._max_results = max(settings.max_trials_per_query, 20)
 
     @staticmethod
     def _sanitize_query_term(term: str) -> str:
         """
         Sanitizes and truncates query.term for the ClinicalTrials.gov query parser:
         - Strips characters that break the parser: [()%:;,/+=<>]
-        - Truncates to at most 4-5 keywords
-        - Enforces maximum 60 characters
+        - Preserves key mutation and biomarker expressions (e.g., EGFR, exon 19 deletion)
+        - Truncates to at most 4-5 keywords and 60 characters
         """
         cleaned = re.sub(r"[()%:;,/+=<>]", " ", term)
         words = cleaned.split()

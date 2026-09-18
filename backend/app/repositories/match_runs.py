@@ -102,51 +102,132 @@ async def get_user_match_history(
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], int]:
     """
-    Queries match_runs and associated patient_profiles strictly filtered
-    by WHERE user_id = :user_id ORDER BY created_at DESC.
+    Queries match history grouped by patient_profile_id (evaluation session),
+    strictly filtered by user_id ORDER BY created_at DESC.
+    Aggregates all evaluated sibling trials, verdicts, and criteria into each session.
     Returns (items, total_count).
     """
     parsed_user_id = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
 
-    # Total count for pagination
+    # 1. Total count of distinct evaluation sessions for pagination
     count_res = await conn.execute(
-        text("select count(*) from match_runs where user_id = :user_id"),
+        text(
+            """
+            select count(distinct pp.id)
+            from patient_profiles pp
+            where pp.user_id = :user_id
+              and exists (select 1 from match_runs mr where mr.patient_profile_id = pp.id)
+            """
+        ),
         {"user_id": parsed_user_id},
     )
     total = count_res.scalar_one()
+    if total == 0:
+        return [], 0
 
-    # Query match runs joined with patient profile and trial info
-    rows = await conn.execute(
+    # 2. Query paginated patient profiles
+    profile_rows = await conn.execute(
         text(
             """
             select
-                mr.id,
-                mr.created_at,
-                mr.overall_verdict,
-                mr.nct_id,
-                mr.satisfied_count,
-                mr.unclear_count,
-                mr.hard_exclusion_hit,
-                mr.latency_ms,
-                mr.token_cost,
-                t.title as trial_title,
-                pp.id as patient_profile_id,
-                pp.raw_text as patient_raw_text,
+                pp.id,
+                pp.created_at,
+                pp.raw_text,
                 pp.structured_query
-            from match_runs mr
-            join patient_profiles pp on mr.patient_profile_id = pp.id
-            left join trials t on mr.nct_id = t.nct_id
-            where mr.user_id = :user_id
-            order by mr.created_at desc
+            from patient_profiles pp
+            where pp.user_id = :user_id
+              and exists (select 1 from match_runs mr where mr.patient_profile_id = pp.id)
+            order by pp.created_at desc
             limit :limit offset :offset
             """
         ),
         {"user_id": parsed_user_id, "limit": limit, "offset": offset},
     )
+    profiles = list(profile_rows.mappings())
+    if not profiles:
+        return [], total
 
+    profile_ids = [p["id"] for p in profiles]
+
+    # 3. Query all match runs for these sessions
+    runs_res = await conn.execute(
+        text(
+            """
+            select
+                mr.id,
+                mr.patient_profile_id,
+                mr.nct_id,
+                mr.overall_verdict,
+                mr.satisfied_count,
+                mr.unclear_count,
+                mr.hard_exclusion_hit,
+                mr.created_at,
+                t.title as trial_title
+            from match_runs mr
+            left join trials t on mr.nct_id = t.nct_id
+            where mr.patient_profile_id = any(:profile_ids)
+            order by mr.patient_profile_id, mr.created_at asc
+            """
+        ),
+        {"profile_ids": profile_ids},
+    )
+    runs = list(runs_res.mappings())
+    run_ids = [r["id"] for r in runs]
+
+    # 4. Fetch criterion verdicts for these runs
+    verdicts_by_run: dict[uuid.UUID, list[dict[str, Any]]] = {rid: [] for rid in run_ids}
+    if run_ids:
+        verdicts_res = await conn.execute(
+            text(
+                """
+                select
+                    cv.match_run_id,
+                    cv.verdict,
+                    cv.rationale,
+                    cv.cited_text,
+                    tc.nct_id,
+                    tc.criterion_type,
+                    tc.criterion_index
+                from criterion_verdicts cv
+                join trial_criteria tc on cv.criterion_id = tc.id
+                where cv.match_run_id = any(:run_ids)
+                order by tc.criterion_type, tc.criterion_index
+                """
+            ),
+            {"run_ids": run_ids},
+        )
+        for vr in verdicts_res.mappings():
+            verdicts_by_run.setdefault(vr["match_run_id"], []).append(
+                {
+                    "nct_id": vr["nct_id"],
+                    "criterion_type": vr["criterion_type"],
+                    "criterion_index": vr["criterion_index"],
+                    "verdict": vr["verdict"],
+                    "rationale": vr["rationale"],
+                    "cited_text": vr["cited_text"],
+                    "citation_validated": True,
+                }
+            )
+
+    # Group runs by profile ID
+    runs_by_profile: dict[uuid.UUID, list[dict[str, Any]]] = {pid: [] for pid in profile_ids}
+    for r in runs:
+        trial_summary = {
+            "match_run_id": str(r["id"]),
+            "nct_id": r["nct_id"],
+            "trial_title": r["trial_title"] or r["nct_id"],
+            "overall_verdict": r["overall_verdict"] or "unclear",
+            "satisfied_count": r["satisfied_count"] or 0,
+            "unclear_count": r["unclear_count"] or 0,
+            "hard_exclusion_hit": bool(r["hard_exclusion_hit"]),
+            "criterion_verdicts": verdicts_by_run.get(r["id"], []),
+        }
+        runs_by_profile.setdefault(r["patient_profile_id"], []).append(trial_summary)
+
+    # 5. Build grouped session response items
     items: list[dict[str, Any]] = []
-    for r in rows.mappings():
-        sq = r["structured_query"]
+    for p in profiles:
+        sq = p["structured_query"]
         if isinstance(sq, str):
             try:
                 sq = json.loads(sq)
@@ -154,23 +235,39 @@ async def get_user_match_history(
                 sq = None
 
         condition = "Clinical Query"
-        if isinstance(sq, dict) and sq.get("condition"):
-            condition = str(sq["condition"])
-        elif r.get("patient_raw_text"):
-            raw = str(r["patient_raw_text"]).strip()
+        biomarkers: list[str] = []
+        stage: str | None = None
+        if isinstance(sq, dict):
+            if sq.get("condition"):
+                condition = str(sq["condition"])
+            if sq.get("biomarkers") and isinstance(sq["biomarkers"], list):
+                biomarkers = [str(b) for b in sq["biomarkers"]]
+            if sq.get("stage"):
+                stage = str(sq["stage"])
+        elif p.get("raw_text"):
+            raw = str(p["raw_text"]).strip()
             condition = (raw[:47] + "...") if len(raw) > 50 else raw
 
-        trial_title = r["trial_title"] or r["nct_id"]
+        session_trials = runs_by_profile.get(p["id"], [])
+        primary_title = session_trials[0]["trial_title"] if session_trials else None
+        primary_nct = session_trials[0]["nct_id"] if session_trials else None
+        primary_verdict = session_trials[0]["overall_verdict"] if session_trials else None
+
         items.append(
             {
-                "id": str(r["id"]),
-                "created_at": r["created_at"],
+                "id": str(p["id"]),
+                "patient_profile_id": str(p["id"]),
+                "created_at": p["created_at"],
                 "condition": condition,
-                "trial_title": trial_title,
-                "nct_id": r["nct_id"],
-                "top_trials": [trial_title] if trial_title else [],
-                "status": r["overall_verdict"] or "unknown",
-                "overall_verdict": r["overall_verdict"],
+                "biomarkers": biomarkers,
+                "stage": stage,
+                "patient_profile": p["raw_text"],
+                "trials": session_trials,
+                "trial_title": primary_title,
+                "nct_id": primary_nct,
+                "top_trials": [t["trial_title"] for t in session_trials],
+                "status": primary_verdict or "evaluated",
+                "overall_verdict": primary_verdict,
             }
         )
 

@@ -12,9 +12,11 @@ from app.pipeline.act import (
     ActStageError,
     build_query_params,
     normalize_study,
+    pre_rank_candidate_trials,
     retrieve_candidate_trials,
+    score_candidate_trial,
 )
-from app.pipeline.schemas import StructuredQuery
+from app.pipeline.schemas import NormalizedTrial, StructuredQuery
 
 
 def test_build_query_params_condition_only():
@@ -272,4 +274,97 @@ async def test_search_studies_raises_400_if_no_query_term(monkeypatch):
                 "filter.overallStatus": "RECRUITING",
             }
         )
+
+
+def test_score_candidate_trial_biomarker_preference_and_conflict_penalty():
+    query = StructuredQuery(
+        condition="non-small cell lung cancer",
+        stage="Stage IV",
+        biomarkers=["EGFR exon 19 deletion"],
+    )
+
+    # 1. Matching EGFR trial
+    egfr_trial = NormalizedTrial(
+        nct_id="NCT00000001",
+        title="Study of Osimertinib in EGFR Mutant Non-Small Cell Lung Cancer",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+        eligibility_text="Inclusion Criteria: Must have documented EGFR exon 19 deletion.",
+        brief_summary="Targeted therapy for patients with EGFR exon 19 deletion NSCLC.",
+    )
+
+    # 2. Conflicting KRAS trial
+    kras_trial = NormalizedTrial(
+        nct_id="NCT00000002",
+        title="A Phase 2 Study of Sotorasib in KRAS G12C Non-Small Cell Lung Cancer",
+        status="RECRUITING",
+        phase=["Phase 2"],
+        conditions=["Non-Small Cell Lung Cancer"],
+        eligibility_text="Inclusion Criteria: Documented KRAS G12C mutation. Must be EGFR wild-type.",
+        brief_summary="Evaluating KRAS G12C inhibition in advanced lung cancer.",
+    )
+
+    # 3. Generic trial without specific driver mutation headline
+    generic_trial = NormalizedTrial(
+        nct_id="NCT00000003",
+        title="Chemotherapy vs Immunotherapy in Advanced Non-Small Cell Lung Cancer",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+        eligibility_text="Inclusion Criteria: Patients with Stage IV NSCLC.",
+        brief_summary="Comparing standard regimens.",
+    )
+
+    score_egfr = score_candidate_trial(egfr_trial, query)
+    score_kras = score_candidate_trial(kras_trial, query)
+    score_generic = score_candidate_trial(generic_trial, query)
+
+    # Matching trial should score highly positive
+    assert score_egfr > 20.0
+    # Conflicting trial should be penalized heavily due to KRAS headline and EGFR wild-type restriction
+    assert score_kras < 0.0
+    # EGFR trial must score much higher than generic and conflicting trials
+    assert score_egfr > score_generic > score_kras
+
+
+def test_pre_rank_candidate_trials_sorts_by_score():
+    query = StructuredQuery(
+        condition="non-small cell lung cancer",
+        stage="Stage IV",
+        biomarkers=["EGFR"],
+    )
+
+    t_kras = NormalizedTrial(
+        nct_id="NCT_KRAS",
+        title="KRAS G12C Inhibitor in NSCLC",
+        status="RECRUITING",
+        phase=["Phase 2"],
+        conditions=["NSCLC"],
+        eligibility_text="Exclusion: EGFR mutation.",
+    )
+    t_generic = NormalizedTrial(
+        nct_id="NCT_GENERIC",
+        title="Pemetrexed Maintenance in Advanced Lung Adenocarcinoma",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+        eligibility_text="Inclusion: Stage IV.",
+    )
+    t_egfr = NormalizedTrial(
+        nct_id="NCT_EGFR",
+        title="Osimertinib in Advanced EGFR-Mutated NSCLC",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+        eligibility_text="Inclusion: Confirmed EGFR mutation, Stage IV.",
+    )
+
+    # Pass in scrambled order
+    ranked = pre_rank_candidate_trials([t_kras, t_generic, t_egfr], query)
+
+    assert len(ranked) == 3
+    assert ranked[0].nct_id == "NCT_EGFR"
+    assert ranked[1].nct_id == "NCT_GENERIC"
+    assert ranked[2].nct_id == "NCT_KRAS"
 

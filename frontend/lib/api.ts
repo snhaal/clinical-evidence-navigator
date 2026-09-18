@@ -197,3 +197,37 @@ export async function fetchHistoryDetail(matchRunId: string): Promise<HistoryDet
 
   return (await response.json()) as HistoryDetailResponse;
 }
+
+/**
+ * Deletes an evaluation session and all cascade-linked match runs.
+ */
+export async function deleteHistorySession(profileId: string): Promise<void> {
+  const baseUrl = getApiBaseUrl();
+  const authHeaders = await getAuthHeaders();
+  if (!authHeaders.Authorization) {
+    throw new ApiError("You must be signed in to delete history.", 401);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/api/v1/history/${profileId}`, {
+      method: "DELETE",
+      headers: {
+        ...authHeaders,
+      },
+    });
+  } catch {
+    throw new ApiError("Failed to connect to history service.", 0);
+  }
+
+  if (!response.ok) {
+    let detail = `Failed to delete history item (Status ${response.status}).`;
+    try {
+      const errorBody = (await response.json()) as ApiErrorShape;
+      if (errorBody?.detail) detail = errorBody.detail;
+    } catch {
+      // non-json response
+    }
+    throw new ApiError(detail, response.status);
+  }
+}

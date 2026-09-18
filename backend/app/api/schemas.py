@@ -6,7 +6,7 @@ change shape.
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.pipeline.schemas import CriterionVerdict, StructuredQuery, TrialMatchSummary
 
@@ -33,15 +33,39 @@ class MatchResponse(BaseModel):
     disclaimer: str = DISCLAIMER
 
 
+class HistoryTrialSummary(BaseModel):
+    match_run_id: str
+    nct_id: str
+    trial_title: str
+    overall_verdict: str
+    satisfied_count: int = 0
+    unclear_count: int = 0
+    hard_exclusion_hit: bool = False
+    criterion_verdicts: list[CriterionVerdict] = Field(default_factory=list)
+
+
 class HistoryItemResponse(BaseModel):
-    id: str
+    id: str  # patient_profile_id
+    patient_profile_id: str = ""
     created_at: datetime
     condition: str
+    biomarkers: list[str] = Field(default_factory=list)
+    stage: str | None = None
+    patient_profile: str | None = None
+    trials: list[HistoryTrialSummary] = Field(default_factory=list)
+
+    # Backwards compatibility fields
     trial_title: str | None = None
     nct_id: str | None = None
     top_trials: list[str] = Field(default_factory=list)
-    status: str
+    status: str = "evaluated"
     overall_verdict: str | None = None
+
+    @model_validator(mode="after")
+    def populate_patient_profile_id(self):
+        if not self.patient_profile_id:
+            self.patient_profile_id = self.id
+        return self
 
 
 class HistoryListResponse(BaseModel):

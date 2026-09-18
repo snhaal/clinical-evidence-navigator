@@ -97,6 +97,10 @@ class NormalizedTrial(BaseModel):
     status: str | None = None
     phase: list[str] = Field(default_factory=list)
     conditions: list[str] = Field(default_factory=list)
+    brief_summary: str = Field(
+        default="",
+        description="Brief study summary used for deterministic biomarker and histology pre-ranking",
+    )
     eligibility_text: str = Field(
         default="",
         description="Raw eligibility criteria text, unmodified, for the Ground stage to split",

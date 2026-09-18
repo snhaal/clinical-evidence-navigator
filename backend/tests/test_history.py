@@ -289,3 +289,147 @@ async def test_match_endpoint_persists_none_user_id_for_guest():
         assert saved_user_ids == [None]
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_delete_history_unauthenticated_returns_401():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.delete("/api/v1/history/some-profile-id")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_history_not_found_returns_404():
+    app.dependency_overrides[get_required_user] = lambda: TEST_USER_A
+    try:
+        with (
+            patch("app.api.routes.get_engine"),
+            patch(
+                "app.api.routes.delete_patient_profile",
+                new_callable=AsyncMock,
+                return_value="not_found",
+            ) as mock_delete,
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.delete("/api/v1/history/nonexistent-profile")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+        mock_delete.assert_called_once()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_delete_history_forbidden_returns_403():
+    app.dependency_overrides[get_required_user] = lambda: TEST_USER_A
+    try:
+        with (
+            patch("app.api.routes.get_engine"),
+            patch(
+                "app.api.routes.delete_patient_profile",
+                new_callable=AsyncMock,
+                return_value="forbidden",
+            ) as mock_delete,
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.delete("/api/v1/history/other-user-profile")
+
+        assert response.status_code == 403
+        assert "Forbidden" in response.json()["detail"]
+        mock_delete.assert_called_once()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_delete_history_owner_returns_200():
+    app.dependency_overrides[get_required_user] = lambda: TEST_USER_A
+    try:
+        with (
+            patch("app.api.routes.get_engine"),
+            patch(
+                "app.api.routes.delete_patient_profile",
+                new_callable=AsyncMock,
+                return_value="deleted",
+            ) as mock_delete,
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.delete("/api/v1/history/prof-12345")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["deleted"] is True
+        assert data["patient_profile_id"] == "prof-12345"
+        mock_delete.assert_called_once()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_get_history_grouped_session_response():
+    mock_items = [
+        {
+            "id": "prof-100",
+            "patient_profile_id": "prof-100",
+            "created_at": datetime.datetime.now(datetime.timezone.utc),
+            "condition": "Non-Small Cell Lung Cancer",
+            "biomarkers": ["EGFR exon 19 del"],
+            "stage": "Stage IV",
+            "patient_profile": "64yo F with metastatic NSCLC EGFR+",
+            "trials": [
+                {
+                    "match_run_id": "run-101",
+                    "nct_id": "NCT01234567",
+                    "trial_title": "Osimertinib Trial",
+                    "overall_verdict": "match",
+                    "satisfied_count": 3,
+                    "unclear_count": 0,
+                    "hard_exclusion_hit": False,
+                    "criterion_verdicts": [],
+                },
+                {
+                    "match_run_id": "run-102",
+                    "nct_id": "NCT07654321",
+                    "trial_title": "Chemo Trial",
+                    "overall_verdict": "no_match",
+                    "satisfied_count": 1,
+                    "unclear_count": 0,
+                    "hard_exclusion_hit": True,
+                    "criterion_verdicts": [],
+                },
+            ],
+            "top_trials": ["NCT01234567 - Osimertinib Trial", "NCT07654321 - Chemo Trial"],
+            "status": "evaluated",
+        }
+    ]
+
+    app.dependency_overrides[get_required_user] = lambda: TEST_USER_A
+    try:
+        with (
+            patch("app.api.routes.get_engine"),
+            patch(
+                "app.api.routes.get_user_match_history",
+                return_value=(mock_items, 1),
+            ),
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.get("/api/v1/history")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 1
+        item = data["items"][0]
+        assert item["patient_profile_id"] == "prof-100"
+        assert item["biomarkers"] == ["EGFR exon 19 del"]
+        assert item["stage"] == "Stage IV"
+        assert len(item["trials"]) == 2
+        assert item["trials"][0]["nct_id"] == "NCT01234567"
+        assert item["trials"][0]["overall_verdict"] == "match"
+    finally:
+        app.dependency_overrides.clear()

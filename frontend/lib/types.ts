@@ -49,10 +49,28 @@ export interface MatchResponse {
 
 export type DossierData = MatchResponse;
 
+export interface HistoryTrialSummary {
+  match_run_id: string;
+  nct_id: string;
+  trial_title: string;
+  overall_verdict: Verdict;
+  satisfied_count: number;
+  unclear_count: number;
+  hard_exclusion_hit: boolean;
+  criterion_verdicts?: CriterionVerdict[];
+}
+
 export interface HistoryItem {
   id: string;
+  patient_profile_id?: string;
   created_at: string;
   condition: string;
+  biomarkers?: string[];
+  stage?: string | null;
+  patient_profile?: string | null;
+  trials?: HistoryTrialSummary[];
+
+  // Backwards compatibility fields
   trial_title?: string | null;
   nct_id?: string | null;
   top_trials: string[];
