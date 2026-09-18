@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { isSupabaseConfigured, SUPABASE_CONFIG_ERROR, supabase } from "@/lib/supabase";
 import { useAuth } from "./AuthProvider";
 
 interface AuthFormProps {
@@ -21,6 +21,13 @@ export function AuthForm({ initialMode }: AuthFormProps) {
   const router = useRouter();
   const { user, isLoading, continueAsGuest } = useAuth();
 
+  // Show explicit on-screen warning if Supabase configuration is missing
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setError(SUPABASE_CONFIG_ERROR);
+    }
+  }, []);
+
   // Already authenticated users are redirected to home; guests remain on login
   useEffect(() => {
     if (!isLoading && user) {
@@ -37,6 +44,11 @@ export function AuthForm({ initialMode }: AuthFormProps) {
     e.preventDefault();
     setError(null);
     setNotice(null);
+
+    if (!isSupabaseConfigured) {
+      setError(SUPABASE_CONFIG_ERROR);
+      return;
+    }
 
     const cleanEmail = email.trim();
     if (!cleanEmail) {
@@ -74,16 +86,7 @@ export function AuthForm({ initialMode }: AuthFormProps) {
           password,
         });
         if (signInError) {
-          if (
-            signInError.message.toLowerCase().includes("invalid login credentials")
-          ) {
-            setError(
-              "Invalid email or password. Please check your credentials and try again."
-            );
-          } else {
-            setError(signInError.message);
-          }
-          return;
+          throw signInError;
         }
         router.push("/");
       } else {
@@ -92,28 +95,40 @@ export function AuthForm({ initialMode }: AuthFormProps) {
           password,
         });
         if (signUpError) {
-          if (signUpError.message.toLowerCase().includes("already registered")) {
-            setError("An account with this email already exists. Try signing in.");
-          } else {
-            setError(signUpError.message);
-          }
-          return;
+          throw signUpError;
         }
 
-        if (data.session) {
+        if (data?.session) {
           router.push("/");
         } else {
           setNotice(
-            "Account created! If email confirmation is enabled, please check your inbox before logging in."
+            "Account created! Please check your email to confirm your account before logging in."
           );
         }
       }
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "An unexpected error occurred. Please try again.";
-      setError(msg);
+    } catch (err: any) {
+      console.error("Auth error details:", err);
+      const errMsg = err?.message || "";
+      const errName = err?.name || "";
+
+      if (
+        errMsg === "Failed to fetch" ||
+        errMsg.includes("Failed to fetch") ||
+        errName === "TypeError" ||
+        errMsg.toLowerCase().includes("networkerror")
+      ) {
+        setError(
+          "Network error: Unable to connect to Supabase. Verify NEXT_PUBLIC_SUPABASE_URL, check for ad-blockers/Brave Shields, or ensure your Supabase project is not paused."
+        );
+      } else if (errMsg.toLowerCase().includes("invalid login credentials")) {
+        setError(
+          "Invalid email or password. Please check your credentials and try again."
+        );
+      } else if (errMsg.toLowerCase().includes("already registered")) {
+        setError("An account with this email already exists. Try signing in.");
+      } else {
+        setError(errMsg || "An unexpected error occurred. Please try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -126,7 +141,9 @@ export function AuthForm({ initialMode }: AuthFormProps) {
           type="button"
           onClick={() => {
             setMode("login");
-            setError(null);
+            if (isSupabaseConfigured) {
+              setError(null);
+            }
             setNotice(null);
           }}
           className={`flex-1 pb-3 text-center text-sm font-medium transition-colors border-b-2 ${
@@ -141,7 +158,9 @@ export function AuthForm({ initialMode }: AuthFormProps) {
           type="button"
           onClick={() => {
             setMode("signup");
-            setError(null);
+            if (isSupabaseConfigured) {
+              setError(null);
+            }
             setNotice(null);
           }}
           className={`flex-1 pb-3 text-center text-sm font-medium transition-colors border-b-2 ${
@@ -166,7 +185,7 @@ export function AuthForm({ initialMode }: AuthFormProps) {
       {notice && (
         <div
           role="status"
-          className="mb-4 rounded-sm border border-accent/30 bg-accent-soft p-3 text-xs text-accent"
+          className="mb-4 rounded-sm border border-emerald-300 bg-emerald-50 p-3 text-xs font-medium text-emerald-800"
         >
           {notice}
         </div>

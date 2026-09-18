@@ -5,11 +5,16 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 
 export function Navbar() {
-  const { user, isLoading, isGuest, signOut } = useAuth();
+  const { user, isLoading, isGuest, signOut, clearGuest } = useAuth();
   const router = useRouter();
 
   const handleSignOut = async () => {
     await signOut();
+    router.push("/login");
+  };
+
+  const handleSignIn = () => {
+    clearGuest();
     router.push("/login");
   };
 
@@ -67,12 +72,13 @@ export function Navbar() {
                 History
               </span>
 
-              <Link
-                href="/login"
+              <button
+                type="button"
+                onClick={handleSignIn}
                 className="rounded-sm bg-accent px-3 py-1 text-xs font-medium text-surface shadow-xs transition-colors hover:bg-accent/90 focus:outline-hidden"
               >
                 Sign In / Register
-              </Link>
+              </button>
             </>
           )}
         </div>

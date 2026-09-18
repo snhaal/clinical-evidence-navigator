@@ -26,7 +26,14 @@ vi.mock("./AuthProvider", () => ({
   }),
 }));
 
+let mockIsSupabaseConfigured = true;
+
 vi.mock("@/lib/supabase", () => ({
+  get isSupabaseConfigured() {
+    return mockIsSupabaseConfigured;
+  },
+  SUPABASE_CONFIG_ERROR:
+    "Configuration error: Supabase environment variables are missing on this deployment. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel and redeploy.",
   supabase: {
     auth: {
       signInWithPassword: (...args: any[]) => mockSignInWithPassword(...args),
@@ -38,6 +45,7 @@ vi.mock("@/lib/supabase", () => ({
 describe("AuthForm Component - Keystroke & Input Stability", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsSupabaseConfigured = true;
     mockSignInWithPassword.mockResolvedValue({ data: { session: {} }, error: null });
     mockSignUp.mockResolvedValue({ data: { session: {} }, error: null });
   });
@@ -114,5 +122,92 @@ describe("AuthForm Component - Keystroke & Input Stability", () => {
 
     expect(mockContinueAsGuest).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith("/");
+  });
+
+  it("displays explicit warning banner when Supabase environment variables are missing", async () => {
+    mockIsSupabaseConfigured = false;
+    render(<AuthForm initialMode="login" />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /configuration error: supabase environment variables are missing on this deployment/i
+    );
+  });
+
+  it("surfaces network error guidance when sign in returns 'Failed to fetch'", async () => {
+    const user = userEvent.setup();
+    mockSignInWithPassword.mockResolvedValueOnce({
+      data: { session: null },
+      error: { message: "Failed to fetch", name: "TypeError" },
+    });
+
+    render(<AuthForm initialMode="login" />);
+
+    await user.type(screen.getByLabelText(/email address/i), "doc@hospital.org");
+    await user.type(screen.getByLabelText(/^password$/i), "secret123");
+    await user.click(screen.getByTestId("auth-submit-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /network error: unable to connect to supabase\. verify next_public_supabase_url/i
+      );
+    });
+  });
+
+  it("surfaces network error guidance when sign in throws a TypeError network exception", async () => {
+    const user = userEvent.setup();
+    mockSignInWithPassword.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    render(<AuthForm initialMode="login" />);
+
+    await user.type(screen.getByLabelText(/email address/i), "doc@hospital.org");
+    await user.type(screen.getByLabelText(/^password$/i), "secret123");
+    await user.click(screen.getByTestId("auth-submit-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /network error: unable to connect to supabase\. verify next_public_supabase_url/i
+      );
+    });
+  });
+
+  it("shows green confirmation notice when account is created with email confirmation required", async () => {
+    const user = userEvent.setup();
+    mockSignUp.mockResolvedValueOnce({
+      data: { user: { id: "new-user-123" }, session: null },
+      error: null,
+    });
+
+    render(<AuthForm initialMode="signup" />);
+
+    await user.type(screen.getByLabelText(/email address/i), "newdoc@hospital.org");
+    await user.type(screen.getByLabelText(/^password$/i), "secret123");
+    await user.type(screen.getByLabelText(/confirm password/i), "secret123");
+    await user.click(screen.getByTestId("auth-submit-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Account created! Please check your email to confirm your account before logging in."
+      );
+    });
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("navigates immediately to home when account is created and session is granted", async () => {
+    const user = userEvent.setup();
+    mockSignUp.mockResolvedValueOnce({
+      data: { user: { id: "new-user-456" }, session: { access_token: "tok" } },
+      error: null,
+    });
+
+    render(<AuthForm initialMode="signup" />);
+
+    await user.type(screen.getByLabelText(/email address/i), "authed@hospital.org");
+    await user.type(screen.getByLabelText(/^password$/i), "secret123");
+    await user.type(screen.getByLabelText(/confirm password/i), "secret123");
+    await user.click(screen.getByTestId("auth-submit-btn"));
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith("/");
+    });
   });
 });

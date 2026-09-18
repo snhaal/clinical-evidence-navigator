@@ -31,7 +31,7 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 function TestConsumer() {
-  const { user, isLoading, isGuest, continueAsGuest, signOut } = useAuth();
+  const { user, isLoading, isGuest, continueAsGuest, clearGuest, signOut } = useAuth();
   return (
     <div>
       <span data-testid="loading">{isLoading ? "loading" : "ready"}</span>
@@ -39,6 +39,9 @@ function TestConsumer() {
       <span data-testid="is-guest">{isGuest ? "guest" : "not-guest"}</span>
       <button onClick={continueAsGuest} data-testid="guest-btn">
         Continue As Guest
+      </button>
+      <button onClick={clearGuest} data-testid="clear-guest-btn">
+        Clear Guest
       </button>
       <button onClick={signOut} data-testid="signout-btn">
         Sign Out
@@ -174,5 +177,41 @@ describe("AuthProvider Component", () => {
     expect(screen.getByTestId("user-email")).toHaveTextContent("no-user");
     expect(screen.getByTestId("is-guest")).toHaveTextContent("not-guest");
     expect(localStorage.getItem("guest_acknowledged")).toBeNull();
+  });
+
+  it("clears guest mode and removes guest_acknowledged flag via clearGuest", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("guest_acknowledged", "true");
+
+    render(
+      <AuthProvider>
+        <TestConsumer />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("loading")).toHaveTextContent("ready");
+    });
+    expect(screen.getByTestId("is-guest")).toHaveTextContent("guest");
+
+    await user.click(screen.getByTestId("clear-guest-btn"));
+
+    expect(screen.getByTestId("is-guest")).toHaveTextContent("not-guest");
+    expect(localStorage.getItem("guest_acknowledged")).toBeNull();
+  });
+
+  it("handles getSession rejection gracefully without hanging loading state", async () => {
+    mockGetSession.mockRejectedValueOnce(new Error("Network error"));
+
+    render(
+      <AuthProvider>
+        <TestConsumer />
+      </AuthProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("loading")).toHaveTextContent("ready");
+    });
+    expect(screen.getByTestId("user-email")).toHaveTextContent("no-user");
   });
 });

@@ -14,6 +14,7 @@ export interface AuthContextType {
   isGuest: boolean;
   signOut: () => Promise<void>;
   continueAsGuest: () => void;
+  clearGuest: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -28,19 +29,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     // Check existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!mounted) return;
-      if (session) {
-        setSession(session);
-        setUser(session.user);
-        setIsGuest(false);
-        try {
-          localStorage.removeItem(GUEST_STORAGE_KEY);
-          localStorage.removeItem(LEGACY_GUEST_STORAGE_KEY);
-        } catch {
-          // Ignore localStorage errors (e.g. private browsing restrictions)
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (!mounted) return;
+        const currentSession = data?.session ?? null;
+        if (currentSession) {
+          setSession(currentSession);
+          setUser(currentSession.user);
+          setIsGuest(false);
+          try {
+            localStorage.removeItem(GUEST_STORAGE_KEY);
+            localStorage.removeItem(LEGACY_GUEST_STORAGE_KEY);
+          } catch {
+            // Ignore localStorage errors (e.g. private browsing restrictions)
+          }
+        } else {
+          setSession(null);
+          setUser(null);
+          try {
+            const storedGuest =
+              localStorage.getItem(GUEST_STORAGE_KEY) === "true" ||
+              localStorage.getItem(LEGACY_GUEST_STORAGE_KEY) === "true";
+            setIsGuest(storedGuest);
+          } catch {
+            setIsGuest(false);
+          }
         }
-      } else {
+      })
+      .catch((err) => {
+        console.error("Failed to restore Supabase session:", err);
+        if (!mounted) return;
         setSession(null);
         setUser(null);
         try {
@@ -51,9 +70,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch {
           setIsGuest(false);
         }
-      }
-      setIsLoading(false);
-    });
+      })
+      .finally(() => {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      });
 
     const {
       data: { subscription },
@@ -100,6 +122,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const clearGuest = () => {
+    setIsGuest(false);
+    try {
+      localStorage.removeItem(GUEST_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_GUEST_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  };
+
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -127,6 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isGuest,
         signOut,
         continueAsGuest,
+        clearGuest,
       }}
     >
       {children}

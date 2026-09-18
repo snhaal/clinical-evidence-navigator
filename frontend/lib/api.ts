@@ -6,7 +6,19 @@ import type {
   MatchResponse,
 } from "./types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+export function getApiBaseUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (envUrl) {
+    return envUrl.replace(/\/$/, "");
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new ApiError(
+      "Configuration error: NEXT_PUBLIC_API_BASE_URL is not configured on this deployment. Please set NEXT_PUBLIC_API_BASE_URL in your hosting provider settings.",
+      500
+    );
+  }
+  return "http://localhost:8000";
+}
 
 export type BackendStatus = "connecting" | "ready" | "error";
 
@@ -43,10 +55,17 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
  * Checks GET /health, falling back to GET / if needed.
  */
 export async function pingBackend(): Promise<boolean> {
+  let baseUrl: string;
+  try {
+    baseUrl = getApiBaseUrl();
+  } catch {
+    return false;
+  }
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s cold-start grace period
-    const response = await fetch(`${API_BASE_URL}/health`, {
+    const response = await fetch(`${baseUrl}/health`, {
       method: "GET",
       signal: controller.signal,
     });
@@ -56,7 +75,7 @@ export async function pingBackend(): Promise<boolean> {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
-      const res = await fetch(`${API_BASE_URL}/`, {
+      const res = await fetch(`${baseUrl}/`, {
         method: "GET",
         signal: controller.signal,
       });
@@ -73,11 +92,12 @@ export async function pingBackend(): Promise<boolean> {
  * Throws ApiError with a specific, user-facing message on non-2xx response.
  */
 export async function matchPatientProfile(patientProfile: string): Promise<MatchResponse> {
+  const baseUrl = getApiBaseUrl();
   let response: Response;
   const authHeaders = await getAuthHeaders();
 
   try {
-    response = await fetch(`${API_BASE_URL}/match`, {
+    response = await fetch(`${baseUrl}/match`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -110,6 +130,7 @@ export async function matchPatientProfile(patientProfile: string): Promise<Match
  * Fetches paginated history for the authenticated user.
  */
 export async function fetchHistory(limit = 20, offset = 0): Promise<HistoryListResponse> {
+  const baseUrl = getApiBaseUrl();
   const authHeaders = await getAuthHeaders();
   if (!authHeaders.Authorization) {
     throw new ApiError("You must be signed in to view match history.", 401);
@@ -117,7 +138,7 @@ export async function fetchHistory(limit = 20, offset = 0): Promise<HistoryListR
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/v1/history?limit=${limit}&offset=${offset}`, {
+    response = await fetch(`${baseUrl}/api/v1/history?limit=${limit}&offset=${offset}`, {
       method: "GET",
       headers: {
         ...authHeaders,
@@ -145,6 +166,7 @@ export async function fetchHistory(limit = 20, offset = 0): Promise<HistoryListR
  * Fetches full details for a specific historical match run.
  */
 export async function fetchHistoryDetail(matchRunId: string): Promise<HistoryDetailResponse> {
+  const baseUrl = getApiBaseUrl();
   const authHeaders = await getAuthHeaders();
   if (!authHeaders.Authorization) {
     throw new ApiError("You must be signed in to view match run details.", 401);
@@ -152,7 +174,7 @@ export async function fetchHistoryDetail(matchRunId: string): Promise<HistoryDet
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/api/v1/history/${matchRunId}`, {
+    response = await fetch(`${baseUrl}/api/v1/history/${matchRunId}`, {
       method: "GET",
       headers: {
         ...authHeaders,
