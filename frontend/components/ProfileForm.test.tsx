@@ -3,11 +3,9 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ProfileForm } from "./ProfileForm";
+import { ProfileForm, SAMPLE_PROFILE } from "./ProfileForm";
 
-const EXPECTED_SAMPLE_PROFILE =
-  "64-year-old female, Stage III esophageal squamous cell carcinoma, completed neoadjuvant " +
-  "chemoradiation, no distant metastasis.";
+const EXPECTED_SAMPLE_PROFILE = SAMPLE_PROFILE;
 
 describe("ProfileForm Regression & Integration Tests", () => {
   it("disables the submit button initially when textarea is empty", () => {

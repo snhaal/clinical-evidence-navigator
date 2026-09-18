@@ -3,9 +3,20 @@
 import { useState } from "react";
 import { DocumentDropzone } from "./DocumentDropzone";
 
-const SAMPLE_PROFILE =
-  "64-year-old female, Stage III esophageal squamous cell carcinoma, completed neoadjuvant " +
-  "chemoradiation, no distant metastasis.";
+export const SAMPLE_PROFILE = `62-year-old male.
+Diagnosis: Stage IV Non-Small Cell Lung Cancer (metastatic lung adenocarcinoma, Stage IVB).
+Biomarkers: EGFR Exon 19 deletion detected (positive). Secondary resistance biomarker: c-Met amplification confirmed via re-biopsy / NGS. ALK negative, KRAS wild-type, ROS1 negative, PD-L1 TPS 30%. Archived FFPE tumor tissue available for central c-Met IHC testing.
+Treatment History: Previously treated with first-line Osimertinib (third-generation EGFR TKI) for 14 months, with documented radiographic disease progression per RECIST v1.1. No prior chemotherapy lines or anti-PD-1 immunotherapy.
+Performance Status: ECOG Performance Status 1.
+Measurable Disease: Measurable lung lesion measuring 2.8 cm in the right lower lobe per RECIST v1.1.
+Laboratory Evaluation:
+- Absolute Neutrophil Count (ANC): 3.2 x 10^9/L (>= 1.5 x 10^9/L)
+- Platelet count: 210 x 10^9/L (>= 100 x 10^9/L)
+- Hemoglobin: 12.6 g/dL (>= 9.0 g/dL)
+- Total Bilirubin: 0.8 mg/dL (<= 1.5x ULN)
+- AST: 24 U/L, ALT: 28 U/L (<= 2.5x ULN)
+- Serum Creatinine: 0.9 mg/dL, CrCl: 84 mL/min (>= 50 mL/min)
+Exclusions Absent: Contrast-enhanced brain MRI negative for central nervous system or brain metastases. No active autoimmune disease. No history of interstitial lung disease (ILD) or pneumonitis. Life expectancy > 12 weeks. No other clinically significant medical conditions or co-morbidities that would interfere with trial participation.`;
 
 interface ProfileFormProps {
   onSubmit: (profile: string) => void;
