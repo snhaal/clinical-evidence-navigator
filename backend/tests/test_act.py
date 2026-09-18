@@ -368,3 +368,89 @@ def test_pre_rank_candidate_trials_sorts_by_score():
     assert ranked[1].nct_id == "NCT_GENERIC"
     assert ranked[2].nct_id == "NCT_KRAS"
 
+
+def test_line_of_therapy_aware_filtering_and_boost():
+    """
+    When the patient has received prior chemotherapy (e.g. platinum doublet):
+    - A trial strictly requiring treatment-naive / previously untreated is heavily penalized.
+    - A trial targeting 2nd-line (2L+) or recurrent/metastatic EGFR inhibitor is boosted.
+    """
+    pre_treated_query = StructuredQuery(
+        condition="non-small cell lung cancer",
+        stage="Stage IV",
+        biomarkers=["EGFR exon 19 deletion"],
+        prior_therapy=["carboplatin/pemetrexed doublet chemotherapy"],
+    )
+
+    # 1. 2L+ trial targeting resistant/pre-treated EGFR NSCLC
+    trial_2l = NormalizedTrial(
+        nct_id="NCT_2L",
+        title="Amivantamab and Lazertinib in Previously Treated EGFR-Mutated NSCLC Following Platinum-Based Chemotherapy",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+        eligibility_text="Inclusion Criteria: Must have received prior platinum-based chemotherapy and progressed. Confirmed EGFR exon 19 deletion.",
+        brief_summary="Evaluating second-line combination therapy post-platinum.",
+    )
+
+    # 2. 1L trial strictly requiring treatment-naive
+    trial_1l = NormalizedTrial(
+        nct_id="NCT_1L",
+        title="First-Line Osimertinib in Treatment-Naive Patients with EGFR-Mutated Advanced NSCLC",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+        eligibility_text="Inclusion Criteria: Must be previously untreated with no prior systemic chemotherapy for metastatic disease. Confirmed EGFR exon 19 deletion.",
+        brief_summary="Front-line study in previously untreated patients.",
+    )
+
+    score_2l = score_candidate_trial(trial_2l, pre_treated_query)
+    score_1l = score_candidate_trial(trial_1l, pre_treated_query)
+
+    # 2L+ trial should score significantly higher than the 1L treatment-naive trial
+    assert score_2l > 40.0
+    assert score_2l > score_1l + 30.0
+
+
+def test_prioritize_biomarker_inclusion_over_phase1_basket_trials():
+    """
+    Trials where the primary biomarker (e.g. EGFR) is an active inclusion criterion
+    must rank above Phase 1 basket / safety trials.
+    """
+    query = StructuredQuery(
+        condition="non-small cell lung cancer",
+        stage="Stage IV",
+        biomarkers=["EGFR exon 19 deletion"],
+    )
+
+    # 1. Targeted Phase 2 study with EGFR as active inclusion criterion
+    targeted_trial = NormalizedTrial(
+        nct_id="NCT_TARGETED",
+        title="Phase 2 Study of Targeted EGFR TKI in EGFR-Mutant NSCLC",
+        status="RECRUITING",
+        phase=["Phase 2"],
+        conditions=["Non-Small Cell Lung Cancer"],
+        eligibility_text="Inclusion Criteria:\n- Documented EGFR exon 19 deletion\n- Stage IV NSCLC\nExclusion Criteria:\n- Prior severe toxicity",
+        brief_summary="Assessing efficacy in EGFR-positive patients.",
+    )
+
+    # 2. Phase 1 basket / dose-escalation trial in advanced solid tumors
+    basket_trial = NormalizedTrial(
+        nct_id="NCT_BASKET",
+        title="Phase 1 Dose Escalation and Safety Study of Novel Agent in Advanced Solid Tumors",
+        status="RECRUITING",
+        phase=["Phase 1"],
+        conditions=["Advanced Solid Tumors"],
+        eligibility_text="Inclusion Criteria:\n- Histologically confirmed advanced solid tumor\n- ECOG 0-1\nExclusion Criteria:\n- Active infection",
+        brief_summary="First-in-human dose-escalation study evaluating safety and tolerability.",
+    )
+
+    score_targeted = score_candidate_trial(targeted_trial, query)
+    score_basket = score_candidate_trial(basket_trial, query)
+
+    assert score_targeted > score_basket + 30.0
+
+    ranked = pre_rank_candidate_trials([basket_trial, targeted_trial], query)
+    assert ranked[0].nct_id == "NCT_TARGETED"
+    assert ranked[1].nct_id == "NCT_BASKET"
+

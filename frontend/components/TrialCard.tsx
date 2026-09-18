@@ -22,11 +22,19 @@ export function TrialCard({ trial }: { trial: TrialMatchSummary }) {
           <h3 className="mt-1 font-serif text-lg font-semibold leading-snug text-ink">{trial.title}</h3>
           <p className="mt-1 text-sm text-muted">
             {trial.satisfied_count} of {totalCriteria} criteria satisfied
-            {trial.unclear_count > 0 && ` · ${trial.unclear_count} unclear`}
+            {trial.overall_verdict === "match" && trial.unclear_count > 0 ? (
+              <span className="text-match font-medium"> · Clinical match (screening labs pending)</span>
+            ) : trial.unclear_count > 0 ? (
+              ` · ${trial.unclear_count} unclear`
+            ) : null}
             {trial.hard_exclusion_hit && " · excluded on a hard criterion"}
           </p>
         </div>
-        <VerdictBadge verdict={trial.overall_verdict} />
+        <VerdictBadge
+          verdict={trial.overall_verdict}
+          matchTier={trial.match_tier}
+          unclearCount={trial.unclear_count}
+        />
       </button>
 
       {expanded && (

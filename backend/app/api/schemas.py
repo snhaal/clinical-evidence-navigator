@@ -42,6 +42,7 @@ class HistoryTrialSummary(BaseModel):
     unclear_count: int = 0
     hard_exclusion_hit: bool = False
     criterion_verdicts: list[CriterionVerdict] = Field(default_factory=list)
+    match_tier: str | None = None
 
 
 class HistoryItemResponse(BaseModel):

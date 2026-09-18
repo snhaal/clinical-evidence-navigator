@@ -1,7 +1,7 @@
 // Mirrors app/api/schemas.py and app/pipeline/schemas.py on the backend.
 // Kept as a single source of truth for the frontend's view of the API shape.
 
-export type Verdict = "match" | "no_match" | "unclear";
+export type Verdict = "match" | "no_match" | "unclear" | "likely_match" | "candidate_match";
 
 export interface StructuredQuery {
   condition: string;
@@ -35,6 +35,7 @@ export interface TrialMatchSummary {
   criterion_verdicts: CriterionVerdict[];
   phase?: string[] | string;
   status?: string;
+  match_tier?: string | null;
 }
 
 export interface MatchResponse {
@@ -58,6 +59,7 @@ export interface HistoryTrialSummary {
   unclear_count: number;
   hard_exclusion_hit: boolean;
   criterion_verdicts?: CriterionVerdict[];
+  match_tier?: string | null;
 }
 
 export interface HistoryItem {

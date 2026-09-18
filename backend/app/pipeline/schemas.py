@@ -156,3 +156,9 @@ class TrialMatchSummary(BaseModel):
     unclear_count: int = Field(..., ge=0)
     hard_exclusion_hit: bool
     criterion_verdicts: list[CriterionVerdict] = Field(default_factory=list)
+    phase: list[str] | str | None = None
+    status: str | None = None
+    match_tier: str | None = Field(
+        default=None,
+        description="Match tier: eligible, candidate_match, unclear, or no_match",
+    )

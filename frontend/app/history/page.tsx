@@ -464,7 +464,11 @@ export default function HistoryPage() {
                               </div>
 
                               <div className="shrink-0 flex items-center gap-3">
-                                <VerdictBadge verdict={trial.overall_verdict as Verdict} />
+                                <VerdictBadge
+                                  verdict={trial.overall_verdict as Verdict}
+                                  matchTier={trial.match_tier}
+                                  unclearCount={trial.unclear_count}
+                                />
                                 <button
                                   type="button"
                                   onClick={() => handleSelectRun(trial.match_run_id)}

@@ -104,7 +104,11 @@ def normalize_study(raw_study: dict) -> NormalizedTrial | None:
 def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> float:
     """
     Deterministic pre-ranking score for candidate trials before LLM verification:
-    - Heavily rewards matching biomarkers/mutations (title, summary, criteria).
+    - Heavily rewards matching biomarkers/mutations, prioritizing trials where the
+      primary biomarker is an active inclusion criterion.
+    - Penalizes Phase 1 basket / safety / dose-escalation trials in favor of targeted studies.
+    - Filters/penalizes trials requiring treatment-naive / first-line when patient has prior
+      therapy, and boosts 2nd-line (2L+) / recurrent / refractory studies.
     - Penalizes trials centered on conflicting driver mutations (e.g. KRAS for an EGFR patient).
     - Rewards histology and stage alignment.
     """
@@ -114,6 +118,11 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
     eligibility_lower = trial.eligibility_text.lower()
     conditions_text = " ".join(trial.conditions).lower()
 
+    # Split eligibility text into inclusion and exclusion sections
+    eligibility_parts = re.split(r"\b(?:key\s+)?exclusion(?:\s+criteria)?:?", eligibility_lower)
+    inclusion_text = eligibility_parts[0] if eligibility_parts else eligibility_lower
+    exclusion_text = eligibility_parts[1] if len(eligibility_parts) > 1 else ""
+
     # Identify patient driver genes
     patient_genes = set()
     for bm in query.biomarkers:
@@ -122,18 +131,21 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
             if word in COMMON_CANCER_GENES:
                 patient_genes.add(word)
 
-    # 1. Biomarker scoring & conflicting mutation detection
+    # 1. Biomarker scoring: Active inclusion criteria prioritized
     for bm in query.biomarkers:
         bm_lower = bm.lower().strip()
         if not bm_lower:
             continue
 
-        # Check full biomarker phrase or sub-phrases
+        # Check full biomarker phrase
         if bm_lower in title_lower:
-            score += 15.0
+            score += 18.0
         elif bm_lower in summary_lower:
             score += 8.0
-        elif bm_lower in eligibility_lower:
+
+        if bm_lower in inclusion_text:
+            score += 12.0
+        elif bm_lower in eligibility_lower and not (exclusion_text and bm_lower in exclusion_text):
             score += 6.0
 
         # Sub-token matching (e.g., "exon 19", "l858r", "t790m", "v600e")
@@ -141,8 +153,20 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
             if len(token) >= 3:
                 if token in title_lower:
                     score += 6.0
-                elif token in summary_lower or token in eligibility_lower:
+                elif token in inclusion_text:
+                    score += 5.0
+                elif token in summary_lower:
                     score += 3.0
+
+    # Primary biomarker active inclusion criterion bonus vs exclusion penalty
+    for pg in patient_genes:
+        if re.search(rf"\b{re.escape(pg)}\b", inclusion_text):
+            score += 16.0
+            if re.search(rf"\b{re.escape(pg)}\b", title_lower):
+                score += 12.0
+        # If trial explicitly lists patient's gene under exclusion criteria
+        if exclusion_text and re.search(rf"\b{re.escape(pg)}\b", exclusion_text):
+            score -= 25.0
 
     # Conflicting driver mutation penalty
     # e.g., if patient has EGFR, penalize trials targeting other mutually exclusive drivers (like KRAS)
@@ -153,13 +177,79 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
             if re.search(rf"\b{re.escape(cg)}\b", title_lower) and not any(
                 pg in title_lower for pg in patient_genes
             ):
-                score -= 12.0
+                score -= 15.0
             # Explicit wild-type restriction against patient's gene
             for pg in patient_genes:
                 if re.search(rf"{re.escape(pg)}[\s\-]+wild[\s\-]*type|without[\s\-]+{re.escape(pg)}", eligibility_lower):
-                    score -= 15.0
+                    score -= 18.0
 
-    # 2. Histology / Condition matching
+    # 2. Line-of-therapy aware retrieval & filtering
+    patient_pre_treated = bool(query.prior_therapy) and not all(
+        pt.strip().lower() in {"none", "no prior therapy", "naive", "treatment-naive", "untreated"}
+        for pt in query.prior_therapy
+    )
+
+    is_trial_treatment_naive = bool(
+        re.search(
+            r"\b(treatment[\s\-]+na[iï]ve|previously[\s\-]+untreated|no\s+prior\s+(systemic|chemo\w*|therapy|treatment)|first[\s\-]+line|1st[\s\-]+line|\b1l\b|front[\s\-]+line)\b",
+            title_lower,
+        )
+        or re.search(
+            r"\b(treatment[\s\-]+na[iï]ve|previously[\s\-]+untreated|no\s+prior\s+(systemic|chemo\w*|therapy|treatment))\b",
+            inclusion_text,
+        )
+    )
+
+    is_trial_pre_treated = bool(
+        re.search(
+            r"\b(second[\s\-]+line|2nd[\s\-]+line|\b2l\+?\b|third[\s\-]+line|\b3l\+?\b|subsequent[\s\-]+line|previously[\s\-]+treated|prior\s+(systemic|chemo\w*|platinum|therapy|treatment|lines?|tki)|recurrent|relapsed|refractory|resistant|progressed|progression|post[\s\-]+platinum|after\s+(prior|platinum|chemo\w*|osimertinib|tki))\b",
+            title_lower + " " + summary_lower + " " + inclusion_text,
+        )
+    )
+
+    if patient_pre_treated:
+        # Pre-treated patient: filter/penalize naive trials, target 2L+ / resistant / recurrent studies
+        if is_trial_treatment_naive:
+            score -= 35.0
+        if is_trial_pre_treated:
+            score += 16.0
+            # Target 2nd-line (2L+) or recurrent/metastatic EGFR inhibitor trials for pre-treated patients
+            if "egfr" in patient_genes and (
+                re.search(
+                    r"\b(osimertinib|t790m|c797s|amivantamab|lazertinib|egfr[\s\-]+tki|her3|adc)\b",
+                    title_lower + " " + summary_lower,
+                )
+                or re.search(
+                    r"\b(resistant|refractory|progressed|post[\s\-]+platinum)\b",
+                    title_lower,
+                )
+            ):
+                score += 14.0
+    else:
+        # Treatment-naive patient
+        if is_trial_treatment_naive:
+            score += 12.0
+        elif is_trial_pre_treated:
+            score -= 22.0
+
+    # 3. Penalize Phase 1 basket/safety trials in favor of disease/biomarker targeted studies
+    is_strictly_phase_1 = any("phase 1" in p.lower() or "phase1" in p.lower() for p in trial.phase) and not any(
+        "phase 2" in p.lower() or "phase 3" in p.lower() for p in trial.phase
+    )
+    is_basket_or_dose_escalation = bool(
+        re.search(
+            r"\b(basket|dose[\s\-]+escalation|dose[\s\-]+finding|first[\s\-]+in[\s\-]+human|\bfih\b|safety\s+(and|&)\s+tolerability|maximum\s+tolerated\s+dose)\b",
+            title_lower,
+        )
+        or re.search(r"\b(solid\s+tumors?|advanced\s+solid\s+tumors?|advanced\s+malignancies?)\b", conditions_text)
+    )
+
+    if is_strictly_phase_1 and is_basket_or_dose_escalation:
+        has_specific_patient_gene_focus = any(pg in title_lower for pg in patient_genes)
+        if not has_specific_patient_gene_focus:
+            score -= 25.0
+
+    # 4. Histology / Condition matching
     histology_terms = [
         "adenocarcinoma", "squamous", "non-small cell", "nsclc", "small cell", "sclc",
         "melanoma", "carcinoma", "sarcoma", "glioblastoma", "cholangiocarcinoma",
@@ -175,7 +265,7 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
             elif ht in eligibility_lower:
                 score += 2.0
 
-    # 3. Stage matching
+    # 5. Stage matching
     if query.stage:
         stage_clean = query.stage.lower().strip()
         stage_terms = [stage_clean]
@@ -192,11 +282,11 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
                 score += 2.0
                 break
 
-    # 4. Phase preference (Phase 2 or 3 slightly preferred for active therapeutic evaluation)
+    # 6. Phase preference (Phase 2 or 3 preferred for active therapeutic evaluation)
     for p in trial.phase:
         p_lower = p.lower()
         if "phase 2" in p_lower or "phase 3" in p_lower:
-            score += 1.0
+            score += 3.0
             break
 
     return score

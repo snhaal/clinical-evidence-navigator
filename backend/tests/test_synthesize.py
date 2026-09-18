@@ -162,3 +162,144 @@ def test_synthesize_results_includes_trials_with_no_recorded_verdicts():
 
     assert len(results) == 1
     assert results[0].overall_verdict == "unclear"
+
+
+def test_candidate_match_tier_when_only_routine_labs_are_unclear():
+    """
+    All clinical criteria (condition, stage, biomarker) are satisfied.
+    Routine screening labs (CBC, LFTs, ECOG) are unclear because they are not
+    stated in a referral note. The trial must be marked as overall_verdict='match'
+    with match_tier='candidate_match'.
+    """
+    trial = make_trial("NCT_CANDIDATE")
+    verdicts = [
+        CriterionVerdict(
+            nct_id="NCT_CANDIDATE",
+            criterion_type="inclusion",
+            criterion_index=0,
+            verdict="match",
+            rationale="Patient has metastatic adenocarcinoma of the lung",
+            cited_text="Non-small cell lung cancer, stage IV",
+        ),
+        CriterionVerdict(
+            nct_id="NCT_CANDIDATE",
+            criterion_type="inclusion",
+            criterion_index=1,
+            verdict="match",
+            rationale="Documented EGFR exon 19 deletion",
+            cited_text="EGFR mutation positive",
+        ),
+        CriterionVerdict(
+            nct_id="NCT_CANDIDATE",
+            criterion_type="inclusion",
+            criterion_index=2,
+            verdict="unclear",
+            rationale="Profile does not state blood counts or ANC",
+            cited_text="Absolute neutrophil count (ANC) >= 1,500/mcL, platelets >= 100,000/mcL",
+        ),
+        CriterionVerdict(
+            nct_id="NCT_CANDIDATE",
+            criterion_type="inclusion",
+            criterion_index=3,
+            verdict="unclear",
+            rationale="Profile does not mention liver function tests",
+            cited_text="Total bilirubin <= 1.5x ULN, AST and ALT <= 2.5x ULN",
+        ),
+        CriterionVerdict(
+            nct_id="NCT_CANDIDATE",
+            criterion_type="inclusion",
+            criterion_index=4,
+            verdict="unclear",
+            rationale="Performance status not recorded",
+            cited_text="ECOG performance status 0 to 1",
+        ),
+        CriterionVerdict(
+            nct_id="NCT_CANDIDATE",
+            criterion_type="exclusion",
+            criterion_index=0,
+            verdict="no_match",
+            rationale="No symptomatic brain metastases reported",
+            cited_text="Active symptomatic CNS metastases",
+        ),
+    ]
+
+    summary = summarize_trial(trial, verdicts)
+
+    assert summary.overall_verdict == "match"
+    assert summary.match_tier == "candidate_match"
+    assert summary.satisfied_count == 2
+    assert summary.unclear_count == 3
+    assert summary.hard_exclusion_hit is False
+
+
+def test_zero_disease_criteria_matched_is_no_match():
+    """
+    If a key inclusion criterion is evaluated as no_match, the trial is disqualified (no_match),
+    even if other criteria are satisfied or unclear.
+    """
+    trial = make_trial("NCT_ZERO")
+    verdicts = [
+        CriterionVerdict(
+            nct_id="NCT_ZERO",
+            criterion_type="inclusion",
+            criterion_index=0,
+            verdict="no_match",
+            rationale="Mismatched condition",
+            cited_text="Prostate adenocarcinoma",
+        ),
+    ]
+    summary = summarize_trial(trial, verdicts)
+
+    assert summary.overall_verdict == "no_match"
+    assert summary.match_tier == "no_match"
+
+
+def test_rank_trials_orders_eligible_before_candidate_match_before_unclear():
+    t_eligible = summarize_trial(
+        make_trial("NCT_ELIGIBLE"),
+        [
+            make_verdict("NCT_ELIGIBLE", "inclusion", "match", 0),
+            make_verdict("NCT_ELIGIBLE", "inclusion", "match", 1),
+        ],
+    )
+    t_candidate = summarize_trial(
+        make_trial("NCT_CANDIDATE"),
+        [
+            make_verdict("NCT_CANDIDATE", "inclusion", "match", 0),
+            CriterionVerdict(
+                nct_id="NCT_CANDIDATE",
+                criterion_type="inclusion",
+                criterion_index=1,
+                verdict="unclear",
+                rationale="No LFTs in note",
+                cited_text="AST/ALT <= 2.5x ULN",
+            ),
+        ],
+    )
+    t_unclear = summarize_trial(
+        make_trial("NCT_UNCLEAR"),
+        [
+            make_verdict("NCT_UNCLEAR", "inclusion", "match", 0),
+            CriterionVerdict(
+                nct_id="NCT_UNCLEAR",
+                criterion_type="inclusion",
+                criterion_index=1,
+                verdict="unclear",
+                rationale="Missing biomarker confirmation",
+                cited_text="Documented HER2 amplification",
+            ),
+        ],
+    )
+    t_nomatch = summarize_trial(
+        make_trial("NCT_NOMATCH"),
+        [make_verdict("NCT_NOMATCH", "inclusion", "no_match", 0)],
+    )
+
+    ranked = rank_trials([t_nomatch, t_unclear, t_candidate, t_eligible])
+
+    assert [t.nct_id for t in ranked] == [
+        "NCT_ELIGIBLE",
+        "NCT_CANDIDATE",
+        "NCT_UNCLEAR",
+        "NCT_NOMATCH",
+    ]

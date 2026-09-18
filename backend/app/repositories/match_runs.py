@@ -212,15 +212,23 @@ async def get_user_match_history(
     # Group runs by profile ID
     runs_by_profile: dict[uuid.UUID, list[dict[str, Any]]] = {pid: [] for pid in profile_ids}
     for r in runs:
+        ov = r["overall_verdict"] or "unclear"
+        unclear_cnt = r["unclear_count"] or 0
+        match_tier = (
+            "candidate_match"
+            if (ov == "match" and unclear_cnt > 0)
+            else ("eligible" if ov == "match" else ov)
+        )
         trial_summary = {
             "match_run_id": str(r["id"]),
             "nct_id": r["nct_id"],
             "trial_title": r["trial_title"] or r["nct_id"],
-            "overall_verdict": r["overall_verdict"] or "unclear",
+            "overall_verdict": ov,
             "satisfied_count": r["satisfied_count"] or 0,
-            "unclear_count": r["unclear_count"] or 0,
+            "unclear_count": unclear_cnt,
             "hard_exclusion_hit": bool(r["hard_exclusion_hit"]),
             "criterion_verdicts": verdicts_by_run.get(r["id"], []),
+            "match_tier": match_tier,
         }
         runs_by_profile.setdefault(r["patient_profile_id"], []).append(trial_summary)
 
@@ -432,15 +440,23 @@ async def get_match_run_detail(
             )
             for svr in sib_verdicts_res.mappings()
         ]
+        ov = sr["overall_verdict"] or "unclear"
+        unclear_cnt = sr["unclear_count"] or 0
+        match_tier = (
+            "candidate_match"
+            if (ov == "match" and unclear_cnt > 0)
+            else ("eligible" if ov == "match" else ov)
+        )
         all_trials.append(
             TrialMatchSummary(
                 nct_id=sr["nct_id"],
                 title=sr["trial_title"] or sr["nct_id"],
-                overall_verdict=sr["overall_verdict"],
-                satisfied_count=sr["satisfied_count"],
-                unclear_count=sr["unclear_count"],
-                hard_exclusion_hit=sr["hard_exclusion_hit"],
+                overall_verdict=ov,
+                satisfied_count=sr["satisfied_count"] or 0,
+                unclear_count=unclear_cnt,
+                hard_exclusion_hit=bool(sr["hard_exclusion_hit"]),
                 criterion_verdicts=sib_verdicts,
+                match_tier=match_tier,
             )
         )
 
