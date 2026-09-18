@@ -422,10 +422,10 @@ def score_candidate_trial(
 def is_obvious_biomarker_negative(trial: NormalizedTrial, query: StructuredQuery) -> bool:
     """
     Returns True if the trial explicitly excludes or contradicts the patient's
-    actionable driver mutation in its title (e.g., 'Without Actionable Mutations',
+    actionable driver mutation in its title or brief summary (e.g., 'Without Actionable Mutations',
     'EGFR-wild-type', or 'KRAS' for an EGFR patient).
     """
-    title_lower = trial.title.lower()
+    text_lower = f"{trial.title} {trial.brief_summary}".lower()
     patient_genes = set()
     for bm in query.biomarkers:
         bm_clean = re.sub(r"[^\w\-]", " ", bm.lower())
@@ -435,12 +435,17 @@ def is_obvious_biomarker_negative(trial: NormalizedTrial, query: StructuredQuery
 
     patient_has_egfr = "egfr" in patient_genes or any("egfr" in bm.lower() for bm in query.biomarkers)
     if patient_has_egfr:
-        if re.search(r"\bwithout\s+actionable\s+(?:mutations?|alterations?|drivers?|oncogenes?)\b", title_lower):
+        if re.search(r"\bwithout\s+actionable\s+(?:mutations?|alterations?|drivers?|oncogenes?)\b", text_lower):
             return True
-        if re.search(r"\begfr[\s\-]+wild[\s\-]*type\b|\begfr[\s\-]+wt\b", title_lower):
+        if re.search(r"\begfr[\s\-]+wild[\s\-]*type\b|\begfr[\s\-]+wt\b|\begfr[\s\-]+negative\b", text_lower):
             return True
-        if re.search(r"\bkras\b", title_lower):
+        if re.search(r"\bkras\b", trial.title.lower()) and not re.search(r"\begfr\b", trial.title.lower()):
             return True
+
+    for pg in patient_genes:
+        if re.search(rf"\b{re.escape(pg)}[\s\-]+(?:wild[\s\-]*type|wt|negative)\b", text_lower):
+            return True
+
     return False
 
 

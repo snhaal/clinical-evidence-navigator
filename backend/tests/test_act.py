@@ -263,10 +263,10 @@ async def test_search_studies_falls_back_to_cond_on_400_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_search_studies_raises_400_if_no_query_term(monkeypatch):
+async def test_search_studies_handles_400_gracefully_with_empty_array(monkeypatch):
     """
     If ClinicalTrials.gov responds with 400 and query.term was NOT present,
-    the error should be raised normally rather than retrying.
+    it logs gracefully and returns an empty array rather than an uncaught exception.
     """
     from app.adapters.clinicaltrials import ClinicalTrialsAPIError, ClinicalTrialsClient
 
@@ -279,13 +279,13 @@ async def test_search_studies_raises_400_if_no_query_term(monkeypatch):
 
     monkeypatch.setattr(client, "_fetch_studies", fake_fetch)
 
-    with pytest.raises(ClinicalTrialsAPIError):
-        await client.search_studies(
-            {
-                "query.cond": "malformed syntax",
-                "filter.overallStatus": "RECRUITING",
-            }
-        )
+    result = await client.search_studies(
+        {
+            "query.cond": "malformed syntax",
+            "filter.overallStatus": "RECRUITING",
+        }
+    )
+    assert result == []
 
 
 def test_score_candidate_trial_biomarker_preference_and_conflict_penalty():
@@ -540,8 +540,39 @@ async def test_search_studies_removes_internal_flags_from_http_params(monkeypatc
     assert sent_params["query.cond"] == "Non-small cell lung cancer"
     assert sent_params["query.term"] == "EGFR"
     assert sent_params["filter.overallStatus"] == "RECRUITING"
-    assert sent_params["pageSize"] == 20
+    assert sent_params["pageSize"] == 15
     assert sent_params["format"] == "json"
+
+
+@pytest.mark.asyncio
+async def test_search_studies_handles_non_200_gracefully_with_empty_array(monkeypatch):
+    from app.adapters.clinicaltrials import ClinicalTrialsAPIError, ClinicalTrialsClient
+
+    client = ClinicalTrialsClient()
+
+    async def fake_failing_fetch(params):
+        raise ClinicalTrialsAPIError("Internal Server Error", status_code=500)
+
+    monkeypatch.setattr(client, "_fetch_studies", fake_failing_fetch)
+
+    result = await client.search_studies({
+        "query.cond": "Lung Cancer",
+        "filter.overallStatus": "RECRUITING",
+    })
+
+    assert result == []
+
+
+def test_is_obvious_biomarker_negative_checks_summary():
+    from app.pipeline.act import is_obvious_biomarker_negative
+
+    query = StructuredQuery(condition="NSCLC", biomarkers=["EGFR exon 19 deletion"])
+    trial_summary_neg = NormalizedTrial(
+        nct_id="NCT_SUMM_NEG",
+        title="Study of Targeted Therapy",
+        brief_summary="This study evaluates patients without actionable mutations.",
+    )
+    assert is_obvious_biomarker_negative(trial_summary_neg, query) is True
 
 
 def test_stage_alignment_penalizes_neoadjuvant_and_resectable_for_stage_iv():

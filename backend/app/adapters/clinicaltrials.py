@@ -68,12 +68,12 @@ def build_stage_aware_query(condition: str, stage: str | None = None) -> str:
 
 
 class ClinicalTrialsClient:
-    def __init__(self, max_results: int = 20) -> None:
+    def __init__(self, max_results: int = 15) -> None:
         settings = get_settings()
         self._base_url = settings.clinicaltrials_api_base
         self._timeout = settings.request_timeout_seconds
-        # Fetch a robust pool of 20 candidate trials from the API instead of just 3
-        self._max_results = max_results or max(settings.max_trials_per_query, 20)
+        # Restrict candidate trials pageSize strictly to 15 per REST v2 guidelines
+        self._max_results = max_results or 15
 
     @staticmethod
     def build_stage_aware_query(condition: str, stage: str | None = None) -> str:
@@ -237,12 +237,36 @@ class ClinicalTrialsClient:
             # Graceful Fallback: If ClinicalTrials.gov returns 400 and query.term was present
             if (exc.status_code == 400 or "status 400" in str(exc)) and "query.term" in params:
                 logger.warning(
-                    "ClinicalTrials.gov 400 for query.term; attempting recovery"
+                    "ClinicalTrials.gov 400 for query.term; attempting recovery without query.term"
                 )
                 fallback_params = {k: v for k, v in params.items() if k != "query.term"}
-                studies = await self._fetch_studies(fallback_params)
+                fallback_params = {
+                    k: v for k, v in fallback_params.items() if k in valid_ct_params and v is not None
+                }
+                try:
+                    studies = await self._fetch_studies(fallback_params)
+                except Exception as inner_exc:
+                    logger.error(
+                        "ClinicalTrials.gov recovery fallback failed (params=%s): %s; returning empty fallback array",
+                        fallback_params,
+                        inner_exc,
+                    )
+                    studies = []
             else:
-                raise
+                logger.error(
+                    "ClinicalTrials.gov non-200 / request error (status=%s, params=%s): %s; returning empty fallback array",
+                    getattr(exc, "status_code", None),
+                    params,
+                    exc,
+                )
+                studies = []
+        except Exception as exc:
+            logger.error(
+                "ClinicalTrials.gov unexpected request failure (params=%s): %s; returning empty fallback array",
+                params,
+                exc,
+            )
+            studies = []
 
         # Automatic query relaxation fallback:
         # If the initial request returns 0 candidate studies, do not immediately return empty results.
@@ -255,6 +279,14 @@ class ClinicalTrialsClient:
             root_cond = self._extract_root_condition(orig_cond) if orig_cond else ""
             status_filter = query_params.get("filter.overallStatus", "RECRUITING")
 
+            async def _safe_fetch_relaxed(relaxed: dict) -> list[dict]:
+                cleaned = {k: v for k, v in relaxed.items() if k in valid_ct_params and v is not None}
+                try:
+                    return await self._fetch_studies(cleaned)
+                except Exception as rel_exc:
+                    logger.warning("ClinicalTrials.gov relaxed query failed (params=%s): %s", cleaned, rel_exc)
+                    return []
+
             if has_actionable_biomarker and "query.term" in query_params:
                 # Do NOT query on condition alone when actionable mutations are detected!
                 # Retain the primary biomarker in query.term and relax condition if needed
@@ -266,7 +298,7 @@ class ClinicalTrialsClient:
                         "pageSize": self._max_results,
                         "format": "json",
                     }
-                    studies = await self._fetch_studies(relaxed_params)
+                    studies = await _safe_fetch_relaxed(relaxed_params)
 
                 if not studies and root_cond:
                     relaxed_params = {
@@ -276,7 +308,7 @@ class ClinicalTrialsClient:
                         "pageSize": self._max_results,
                         "format": "json",
                     }
-                    studies = await self._fetch_studies(relaxed_params)
+                    studies = await _safe_fetch_relaxed(relaxed_params)
             else:
                 # Fallback 1: search with only unbroadened query.cond if query.term or stage was present
                 if orig_cond and ("query.term" in query_params or stage):
@@ -286,7 +318,7 @@ class ClinicalTrialsClient:
                         "pageSize": self._max_results,
                         "format": "json",
                     }
-                    studies = await self._fetch_studies(relaxed_params)
+                    studies = await _safe_fetch_relaxed(relaxed_params)
 
                 # Fallback 2: search with root condition / first 2-3 words if still 0
                 if not studies and root_cond and root_cond != cond:
@@ -296,7 +328,7 @@ class ClinicalTrialsClient:
                         "pageSize": self._max_results,
                         "format": "json",
                     }
-                    studies = await self._fetch_studies(relaxed_params)
+                    studies = await _safe_fetch_relaxed(relaxed_params)
 
             # Fallback 3: if condition was empty but term was present, search using root entity from term
             if not studies and not cond and "query.term" in query_params:
@@ -308,7 +340,7 @@ class ClinicalTrialsClient:
                         "pageSize": self._max_results,
                         "format": "json",
                     }
-                    studies = await self._fetch_studies(relaxed_params)
+                    studies = await _safe_fetch_relaxed(relaxed_params)
 
         return studies
 

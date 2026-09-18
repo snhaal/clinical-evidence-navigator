@@ -14,10 +14,23 @@ from app.pipeline.schemas import CriterionVerdict, NormalizedTrial, TrialMatchSu
 _TIER_RANK_PRIORITY = {
     "eligible": 0,
     "candidate_match": 1,
+    "likely_match": 1,
     "match": 1,
     "unclear": 2,
     "no_match": 3,
 }
+
+CORE_ONCOLOGIC_PATTERNS = [
+    # Histology, Diagnosis & Cancer Type
+    r"\b(cancer|carcinoma|adenocarcinoma|squamous|sarcoma|melanoma|leukemia|lymphoma|myeloma|neoplasm|malignan\w+|tumor|tumour|nsclc|sclc|tnbc)\b",
+    # Staging & Metastatic Status
+    r"\b(stage\s+[i|1|2|3|4|iv|iii|ii]+|metastat\w+|locally\s+advanced|advanced\s+disease|unresectable|resectable|m0|m1)\b",
+    # Biomarkers, Genes & Molecular Targets
+    r"\b(egfr|her2|erbb2|braf|kras|alk|ros1|met|ret|ntrk|brca[12]?|pik3ca|pdl1|pd-l1|msi-h|dmmr)\b",
+    r"\b(mutation|alteration|amplification|deletion|rearrangement|fusion|exon\s*\d+|wild[\s\-]*type|wt)\b",
+    # Line of Therapy & Prior Treatment
+    r"\b(prior\s+(?:systemic|therapy|line|lines|treatment|chemo\w*|platinum|tki)|line\s+of\s+therapy|1l|2l|3l|treatment[\s\-]+na[iï]ve|previously\s+untreated|recurrent|relapsed|refractory|resistant|progressed|progression|osimertinib|tki)\b",
+]
 
 ROUTINE_LAB_SCREENING_PATTERNS = [
     # Hematology / Bone marrow
@@ -33,7 +46,7 @@ ROUTINE_LAB_SCREENING_PATTERNS = [
     r"\b(alkaline\s+phosphatase|alp)\b",
     r"\b(liver\s+function|hepatic\s+function|lfts?)\b",
     # Renal / Kidney function
-    r"\b(creatinine|crcl|creatinine\s+clearance|egfr)\b",
+    r"\b(creatinine|crcl|creatinine\s+clearance|estimated\s+glomerular\s+filtration\s+rate|gfr)\b",
     r"\b(bun|blood\s+urea\s+nitrogen|renal\s+function)\b",
     r"\bproteinuria\b",
     # Performance status
@@ -50,12 +63,24 @@ ROUTINE_LAB_SCREENING_PATTERNS = [
 ]
 
 
+def is_core_oncologic_criterion(verdict: CriterionVerdict) -> bool:
+    """
+    Returns True if the criterion corresponds to primary disease histology,
+    cancer stage, target driver biomarkers, or line-of-therapy requirements.
+    """
+    text = f"{verdict.cited_text} {verdict.rationale}".lower()
+    return any(re.search(pat, text) for pat in CORE_ONCOLOGIC_PATTERNS)
+
+
 def is_routine_lab_or_screening_criterion(verdict: CriterionVerdict) -> bool:
     """
     Returns True if the criterion corresponds to routine laboratory, organ function,
     performance status, or standard protocol screening requirements (which are
     frequently pending or unstated in clinical referral summaries).
+    Core oncologic criteria (condition, stage, biomarkers, therapy line) are NEVER routine.
     """
+    if is_core_oncologic_criterion(verdict):
+        return False
     text = f"{verdict.cited_text} {verdict.rationale}".lower()
     return any(re.search(pat, text) for pat in ROUTINE_LAB_SCREENING_PATTERNS)
 
@@ -140,21 +165,31 @@ def summarize_trial(
 
 def rank_trials(summaries: list[TrialMatchSummary]) -> list[TrialMatchSummary]:
     """
-    Sort order:
-      1. Trials that survive hard exclusions rank above those that don't.
-      2. Match tier: eligible (0) -> candidate_match (1) -> unclear (2) -> no_match (3).
-      3. Satisfied-criteria count descending.
-      4. Unclear criteria count ascending.
+    Sort final evaluated trials by clinical relevance:
+      1. Hard exclusion hit: False (0) before True (1).
+      2. Primary tier: Eligible (eligible: 0, candidate_match/match: 1)
+                       > Unclear (2)
+                       > No Match (3).
+      3. Secondary score: Criteria satisfaction ratio (satisfied_criteria / total_extracted_criteria) descending
+         (so a 5/5 match ranks above a 6/20 match).
+      4. Tie-breaker 1: raw satisfied_count descending.
+      5. Tie-breaker 2: unclear_count ascending.
     """
-    return sorted(
-        summaries,
-        key=lambda s: (
+    def _sort_key(s: TrialMatchSummary):
+        total_criteria = len(s.criterion_verdicts)
+        satisfaction_ratio = (
+            (s.satisfied_count / total_criteria) if total_criteria > 0 else 0.0
+        )
+        tier_val = _TIER_RANK_PRIORITY.get(s.match_tier or s.overall_verdict, 2)
+        return (
             s.hard_exclusion_hit,  # False (0) sorts before True (1)
-            _TIER_RANK_PRIORITY.get(s.match_tier or s.overall_verdict, 2),
-            -s.satisfied_count,
-            s.unclear_count,
-        ),
-    )
+            tier_val,             # Eligible (0/1) > Unclear (2) > No Match (3)
+            -satisfaction_ratio,  # Satisfaction ratio descending (e.g. 5/5 > 6/20)
+            -s.satisfied_count,   # Tie-breaker 1: raw satisfied count descending
+            s.unclear_count,      # Tie-breaker 2: unclear criteria ascending
+        )
+
+    return sorted(summaries, key=_sort_key)
 
 
 def synthesize_results(

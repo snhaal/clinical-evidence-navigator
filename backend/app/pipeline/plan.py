@@ -60,6 +60,7 @@ Rules:
 - Limit search terms and extracted keywords to 2-4 concise search tokens (e.g., "EGFR" or "Stage IV EGFR").
 - Never output punctuation, percentages (%), parentheses, or full sentences in the search terms or keyword fields (stage, prior_therapy, biomarkers). Extract only concise individual drug names (e.g. "cisplatin") or key gene targets (e.g. "EGFR"), never descriptions or narrative sentences.
 - DO NOT include staging notation (TNM, AJCC, Stage III), specific pathology descriptors (ypT2N1M0), lab thresholds, or surgical procedures in the search query keywords. Those are evaluated during verification, not retrieval.
+- OUTPUT DETERMINISM: Output keys in the EXACT order shown above: condition, stage, prior_therapy, biomarkers, exclusions, age, sex, status_filter. Provide strictly deterministic, reproducible JSON without commentary.
 """
 
 

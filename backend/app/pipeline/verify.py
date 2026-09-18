@@ -75,6 +75,7 @@ Rules:
    - Documented absence of distant spread (e.g. 'no distant metastasis', 'M0') satisfies distant metastatic exclusions and non-metastatic requirements ("match").
    - For all time-based criteria (e.g. 'completed within 6 months'), use today's date stated in the prompt as the reference point.
 7. Citation Rule: "cited_text" must be copied VERBATIM from the criterion text you were given — do not paraphrase, summarize, or modify comparison operators (<, <=, >=). If verdict is "unclear" due to missing information, cite the full criterion text instead.
+8. Output Determinism: Output keys in the EXACT order: criterion_type, criterion_index, evidence_quote, rationale, verdict, cited_text. Produce strictly reproducible, deterministic JSON without commentary.
 """
 
 # --- Batched prompt: judges every criterion for one trial in one call -------
@@ -114,6 +115,7 @@ Rules:
    - For all time-based criteria (e.g. 'completed within 6 months'), use today's date stated in the prompt as the reference point.
 7. Citation Rule: "cited_text" must be copied VERBATIM from THAT criterion's own text — never from a different criterion, never paraphrased, and preserve comparison operators (<, <=, >=) exactly as written in the criterion text. If verdict is "unclear" due to missing information, cite that criterion's full text instead.
 8. criterion_type and criterion_index in your response must exactly match one of the criteria listed below.
+9. Output Determinism: Output array elements in the EXACT sequential order of criteria given below. For each object, output keys in the EXACT order: criterion_type, criterion_index, evidence_quote, rationale, verdict, cited_text. Produce strictly reproducible, deterministic JSON without commentary.
 """
 
 

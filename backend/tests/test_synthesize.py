@@ -303,3 +303,57 @@ def test_rank_trials_orders_eligible_before_candidate_match_before_unclear():
         "NCT_UNCLEAR",
         "NCT_NOMATCH",
     ]
+
+
+def test_rank_trials_orders_by_criteria_satisfaction_ratio():
+    """
+    Secondary score: Criteria satisfaction ratio (satisfied_criteria / total_extracted_criteria)
+    rather than raw satisfied count (so a 5/5 match ranks above a 6/20 match).
+    """
+    trial_5_of_5 = summarize_trial(
+        make_trial("NCT_5_OF_5"),
+        [make_verdict("NCT_5_OF_5", "inclusion", "match", i) for i in range(5)],
+    )
+
+    v_20 = [make_verdict("NCT_6_OF_20", "inclusion", "match", i) for i in range(6)]
+    v_20.extend([
+        CriterionVerdict(
+            nct_id="NCT_6_OF_20",
+            criterion_type="inclusion",
+            criterion_index=6 + j,
+            verdict="unclear",
+            rationale="Lab pending",
+            cited_text="Platelets >= 100,000/mcL and ANC >= 1500",
+        )
+        for j in range(14)
+    ])
+    trial_6_of_20 = summarize_trial(make_trial("NCT_6_OF_20"), v_20)
+
+    ranked = rank_trials([trial_6_of_20, trial_5_of_5])
+
+    assert ranked[0].nct_id == "NCT_5_OF_5"
+    assert ranked[1].nct_id == "NCT_6_OF_20"
+
+
+def test_core_oncologic_biomarker_not_treated_as_routine_screening_lab():
+    """
+    EGFR mutation criterion unclear must NOT be treated as a routine kidney lab.
+    The trial must be marked overall_verdict='unclear', NOT 'candidate_match'.
+    """
+    trial = make_trial("NCT_EGFR_MISSING")
+    verdicts = [
+        make_verdict("NCT_EGFR_MISSING", "inclusion", "match", 0),
+        CriterionVerdict(
+            nct_id="NCT_EGFR_MISSING",
+            criterion_type="inclusion",
+            criterion_index=1,
+            verdict="unclear",
+            rationale="Patient EGFR mutation status not tested",
+            cited_text="Must have documented EGFR exon 19 deletion or L858R mutation",
+        ),
+    ]
+    summary = summarize_trial(trial, verdicts)
+
+    assert summary.overall_verdict == "unclear"
+    assert summary.match_tier == "unclear"
+

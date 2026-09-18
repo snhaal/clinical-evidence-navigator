@@ -427,7 +427,8 @@ class LLMAdapter:
                 model=groq_model,
                 messages=messages,
                 max_tokens=max_tokens,
-                temperature=temperature,
+                temperature=0.0 if temperature is None else temperature,
+                seed=42,
                 response_format=response_format,
                 timeout=self._timeout,
             )
@@ -539,7 +540,8 @@ class LLMAdapter:
                 model=groq_model,
                 messages=formatted_messages,
                 max_tokens=max_tokens,
-                temperature=temperature,
+                temperature=0.0 if temperature is None else temperature,
+                seed=42,
                 response_format={"type": "json_object"},
                 timeout=self._timeout,
             )
@@ -591,8 +593,9 @@ class LLMAdapter:
 
         config_kwargs: dict[str, Any] = {
             "system_instruction": system_prompt,
-            "temperature": temperature,
+            "temperature": 0.0 if temperature is None else temperature,
             "max_output_tokens": max_tokens,
+            "seed": 42,
         }
         if json_schema is not None:
             config_kwargs["response_mime_type"] = "application/json"

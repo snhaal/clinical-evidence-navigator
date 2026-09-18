@@ -49,6 +49,8 @@ from app.repositories.trials import insert_trial_criteria, upsert_trial
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+MAX_TRIALS_PER_QUERY = 3
+
 
 def _client_ip(request: Request) -> str:
     forwarded = request.headers.get("x-forwarded-for")
@@ -137,9 +139,9 @@ async def match_patient(
     # Cooldown pause to allow Groq rolling TPM window to slide down after Plan stage
     await asyncio.sleep(4.0)
 
-    # For live match verification, evaluate strictly the top 3 candidate studies
-    # to protect LLM token quotas and rate limits
-    candidate_trials = trials[:3]
+    # For live match verification, evaluate strictly the top MAX_TRIALS_PER_QUERY candidate studies
+    # to protect LLM token quotas and keep latency under 50s
+    candidate_trials = trials[:MAX_TRIALS_PER_QUERY]
 
     verdicts_by_nct_id: dict = {}
     criterion_ids_by_nct_id: dict = {}
