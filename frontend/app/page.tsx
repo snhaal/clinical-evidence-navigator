@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { BackendStatusBadge } from "@/components/BackendStatusBadge";
-import { Disclaimer } from "@/components/Disclaimer";
 import { ExportDossierButton } from "@/components/ExportDossierButton";
 import { ProfileForm } from "@/components/ProfileForm";
 import { RotatingLoadingState } from "@/components/RotatingLoadingState";
@@ -69,8 +68,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-bg">
-      <Disclaimer />
-
       <div className="mx-auto max-w-reading px-4 py-12">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
