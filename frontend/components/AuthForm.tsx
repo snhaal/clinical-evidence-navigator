@@ -44,6 +44,12 @@ export function AuthForm({ initialMode }: AuthFormProps) {
       return;
     }
 
+    // Basic format check on submission only - no live regex on keystroke
+    if (!cleanEmail.includes("@") || !cleanEmail.includes(".")) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
     if (!password) {
       setError("Please enter your password.");
       return;
@@ -166,7 +172,7 @@ export function AuthForm({ initialMode }: AuthFormProps) {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <div>
           <label
             htmlFor="email-input"
@@ -176,8 +182,12 @@ export function AuthForm({ initialMode }: AuthFormProps) {
           </label>
           <input
             id="email-input"
+            name="email"
             type="email"
             autoComplete="email"
+            spellCheck={false}
+            autoCapitalize="none"
+            autoCorrect="off"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -196,6 +206,7 @@ export function AuthForm({ initialMode }: AuthFormProps) {
           </label>
           <input
             id="password-input"
+            name="password"
             type="password"
             autoComplete={mode === "login" ? "current-password" : "new-password"}
             required
@@ -217,6 +228,7 @@ export function AuthForm({ initialMode }: AuthFormProps) {
             </label>
             <input
               id="confirm-password-input"
+              name="confirmPassword"
               type="password"
               autoComplete="new-password"
               required
@@ -231,6 +243,7 @@ export function AuthForm({ initialMode }: AuthFormProps) {
 
         <button
           type="submit"
+          data-testid="auth-submit-btn"
           disabled={isSubmitting}
           className="w-full rounded-sm bg-accent py-2 text-sm font-medium text-surface shadow-xs transition-colors hover:bg-accent/90 disabled:opacity-60 focus:outline-hidden"
         >
