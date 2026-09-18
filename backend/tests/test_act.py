@@ -454,3 +454,156 @@ def test_prioritize_biomarker_inclusion_over_phase1_basket_trials():
     assert ranked[0].nct_id == "NCT_TARGETED"
     assert ranked[1].nct_id == "NCT_BASKET"
 
+
+def test_build_stage_aware_query_broadens_with_stage_keywords():
+    from app.adapters.clinicaltrials import (
+        ClinicalTrialsClient,
+        build_stage_aware_query,
+    )
+
+    # Combines TNBC with Stage IV / metastatic keywords
+    q1 = build_stage_aware_query("Triple Negative Breast Cancer", "Stage IV")
+    assert q1 == '"Triple Negative Breast Cancer" AND ("metastatic" OR "advanced" OR "Stage IV")'
+
+    # Preserves boolean query if already present
+    assert build_stage_aware_query(q1, "Stage IV") == q1
+
+    # Stage III clause
+    q3 = ClinicalTrialsClient.build_stage_aware_query("esophageal adenocarcinoma", "Stage III")
+    assert q3 == '"esophageal adenocarcinoma" AND ("Stage III" OR "locally advanced")'
+
+    # Condition without stage returns clean condition
+    assert build_stage_aware_query("breast cancer", None) == "breast cancer"
+
+
+@pytest.mark.asyncio
+async def test_search_studies_fetches_20_and_broadens_with_stage(monkeypatch):
+    from app.adapters.clinicaltrials import ClinicalTrialsClient
+
+    client = ClinicalTrialsClient(max_results=20)
+    calls = []
+
+    async def fake_fetch(params):
+        calls.append(dict(params))
+        return [SAMPLE_STUDY]
+
+    monkeypatch.setattr(client, "_fetch_studies", fake_fetch)
+
+    await client.search_studies({
+        "query.cond": "Triple Negative Breast Cancer",
+        "stage": "Stage IV",
+        "filter.overallStatus": "RECRUITING",
+    })
+
+    assert len(calls) == 1
+    assert calls[0]["pageSize"] == 20
+    assert calls[0]["query.cond"] == '"Triple Negative Breast Cancer" AND ("metastatic" OR "advanced" OR "Stage IV")'
+
+
+def test_stage_alignment_penalizes_neoadjuvant_and_resectable_for_stage_iv():
+    stage_iv_query = StructuredQuery(
+        condition="Triple Negative Breast Cancer",
+        stage="Stage IV",
+        biomarkers=["TNBC"],
+    )
+
+    t_neoadjuvant = NormalizedTrial(
+        nct_id="NCT_NEO",
+        title="Neoadjuvant Chemotherapy for Early Triple-Negative Breast Cancer",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Triple Negative Breast Cancer"],
+        eligibility_text="Inclusion: Stage II-III resectable breast cancer.",
+        brief_summary="Evaluating neoadjuvant therapy prior to surgery.",
+    )
+
+    t_metastatic = NormalizedTrial(
+        nct_id="NCT_META",
+        title="Sacituzumab Govitecan in Metastatic Triple-Negative Breast Cancer",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Triple Negative Breast Cancer"],
+        eligibility_text="Inclusion: Documented metastatic or unresectable Stage IV TNBC.",
+        brief_summary="Evaluating targeted ADC in metastatic setting.",
+    )
+
+    score_neo = score_candidate_trial(t_neoadjuvant, stage_iv_query)
+    score_meta = score_candidate_trial(t_metastatic, stage_iv_query)
+
+    # Metastatic study should strongly outrank neoadjuvant study for Stage IV patient
+    assert score_meta > score_neo + 40.0
+    ranked = pre_rank_candidate_trials([t_neoadjuvant, t_metastatic], stage_iv_query)
+    assert ranked[0].nct_id == "NCT_META"
+
+
+def test_cohort_specificity_penalizes_brain_metastases_when_patient_has_none():
+    query_no_brain_mets = StructuredQuery(
+        condition="Triple Negative Breast Cancer",
+        stage="Stage IV",
+        biomarkers=["TNBC"],
+        exclusions=["no brain metastases"],
+    )
+
+    t_brain_mets = NormalizedTrial(
+        nct_id="NCT_BRAIN",
+        title="A Study of Systemic Therapy in Patients with Active Brain Metastases from Breast Cancer",
+        status="RECRUITING",
+        phase=["Phase 2"],
+        conditions=["Breast Cancer"],
+        eligibility_text="Inclusion: Documented active brain metastases.",
+        brief_summary="Evaluating CNS-penetrant therapy.",
+    )
+
+    t_systemic = NormalizedTrial(
+        nct_id="NCT_SYS",
+        title="Standard Chemotherapy as First-line Treatment for Metastatic TNBC",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Triple Negative Breast Cancer"],
+        eligibility_text="Inclusion: Metastatic TNBC.",
+        brief_summary="Evaluating front-line metastatic therapy.",
+    )
+
+    score_brain = score_candidate_trial(t_brain_mets, query_no_brain_mets)
+    score_sys = score_candidate_trial(t_systemic, query_no_brain_mets)
+
+    # Systemic study should outrank specialized brain metastasis trial
+    assert score_sys > score_brain + 40.0
+    ranked = pre_rank_candidate_trials([t_brain_mets, t_systemic], query_no_brain_mets)
+    assert ranked[0].nct_id == "NCT_SYS"
+
+
+def test_biomarker_matching_in_brief_summary_and_tnbc_regimens():
+    query = StructuredQuery(
+        condition="Triple Negative Breast Cancer",
+        stage="Stage IV",
+        biomarkers=["PD-L1 positive", "CPS >= 10"],
+    )
+
+    t_with_summary_biomarker = NormalizedTrial(
+        nct_id="NCT_PBL",
+        title="Phase 3 Study of Pembrolizumab in Metastatic TNBC",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Triple Negative Breast Cancer"],
+        eligibility_text="Inclusion: Advanced TNBC.",
+        brief_summary="Evaluating pembrolizumab in PD-L1 positive patients.",
+    )
+
+    t_generic = NormalizedTrial(
+        nct_id="NCT_GEN",
+        title="Phase 3 Study in Advanced Breast Cancer",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Breast Cancer"],
+        eligibility_text="Inclusion: Advanced breast cancer.",
+        brief_summary="Comparing standard regimens.",
+    )
+
+    score_pbl = score_candidate_trial(t_with_summary_biomarker, query)
+    score_gen = score_candidate_trial(t_generic, query)
+
+    assert score_pbl > 35.0
+    assert score_pbl > score_gen + 25.0
+
+

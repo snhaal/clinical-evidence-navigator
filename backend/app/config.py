@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # --- Cost / abuse controls on the public demo -----------------------
     max_requests_per_ip_per_hour: int = Field(default=20)
     max_patient_profile_chars: int = Field(default=4000)
-    max_trials_per_query: int = Field(default=10)
+    max_trials_per_query: int = Field(default=20)
 
     # --- Supabase Auth ----------------------------------------------------
     supabase_url: str = Field(

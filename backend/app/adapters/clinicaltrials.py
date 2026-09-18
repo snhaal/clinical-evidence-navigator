@@ -26,13 +26,58 @@ class ClinicalTrialsAPIError(Exception):
         self.status_code = status_code
 
 
+def build_stage_aware_query(condition: str, stage: str | None = None) -> str:
+    """
+    Broadens and combines the primary disease/condition with stage keywords
+    for ClinicalTrials.gov API v2:
+    e.g., "Triple Negative Breast Cancer" AND ("metastatic" OR "advanced" OR "Stage IV").
+    """
+    if not condition:
+        return ""
+
+    # If condition already contains boolean operator AND, return as-is
+    if " AND " in condition:
+        return condition
+
+    clean_cond = condition.strip().strip('"')
+    stage_lower = (stage or "").lower().strip()
+    cond_lower = clean_cond.lower()
+
+    # Determine stage keywords
+    if any(st in stage_lower for st in ["iv", "4", "metastat", "advanced", "m1"]) or any(
+        st in cond_lower for st in ["metastat", "stage iv", "stage 4", "advanced"]
+    ):
+        stage_clause = '("metastatic" OR "advanced" OR "Stage IV")'
+    elif any(st in stage_lower for st in ["iii", "3", "locally advanced"]):
+        stage_clause = '("Stage III" OR "locally advanced")'
+    elif any(st in stage_lower for st in ["ii", "2"]):
+        stage_clause = '("Stage II")'
+    elif any(st in stage_lower for st in ["i", "1", "early"]) and not any(
+        st in stage_lower for st in ["iv", "iii", "ii"]
+    ):
+        stage_clause = '("Stage I" OR "early stage")'
+    elif stage:
+        stage_clause = f'("{stage.strip()}")'
+    else:
+        stage_clause = None
+
+    if stage_clause:
+        return f'"{clean_cond}" AND {stage_clause}'
+
+    return clean_cond
+
+
 class ClinicalTrialsClient:
-    def __init__(self) -> None:
+    def __init__(self, max_results: int = 20) -> None:
         settings = get_settings()
         self._base_url = settings.clinicaltrials_api_base
         self._timeout = settings.request_timeout_seconds
-        # Fetch a robust pool of 15-20 candidates for pre-ranking
-        self._max_results = max(settings.max_trials_per_query, 20)
+        # Fetch a robust pool of 20 candidate trials from the API instead of just 3
+        self._max_results = max_results or max(settings.max_trials_per_query, 20)
+
+    @staticmethod
+    def build_stage_aware_query(condition: str, stage: str | None = None) -> str:
+        return build_stage_aware_query(condition, stage)
 
     @staticmethod
     def _sanitize_query_term(term: str) -> str:
@@ -63,6 +108,10 @@ class ClinicalTrialsClient:
         Extracts the primary disease / cancer entity or first 2-3 words,
         stripping staging notation, pathology descriptors, and surgical procedures.
         """
+        # If condition has boolean clause like AND (...), take primary condition part
+        if " AND " in condition:
+            condition = condition.split(" AND ")[0].strip().strip('"')
+
         # Strip staging notation (e.g., Stage III, AJCC, ypT2N1M0, T2N1M0)
         cleaned = re.sub(
             r"\b(stage\s+[ivx\d]+[a-c]?|ajcc(\s+\d+th(\s+edition)?)?|tnm|yp?[t][0-4][a-c]?|yp?[n][0-3][a-c]?|yp?[m][0-1][a-c]?|ecog\s+\d)\b",
@@ -137,6 +186,12 @@ class ClinicalTrialsClient:
         # Ensure filter.overallStatus is always RECRUITING
         params["filter.overallStatus"] = "RECRUITING"
 
+        # Broaden search query: combine condition with stage keywords when stage is available
+        cond = params.get("query.cond", "")
+        stage = params.pop("stage", None) or query_params.get("query.stage")
+        if cond and stage and " AND " not in cond:
+            params["query.cond"] = self.build_stage_aware_query(cond, stage)
+
         # Sanitize and guard query.term against parser-breaking characters and length
         if params.get("query.term"):
             sanitized_term = self._sanitize_query_term(params["query.term"])
@@ -165,14 +220,14 @@ class ClinicalTrialsClient:
         # (or the first 2-3 words of the condition).
         if not studies and ("query.cond" in query_params or "query.term" in query_params):
             logger.info("Initial search returned 0 trials; auto-relaxing query to root condition.")
-            cond = query_params.get("query.cond", "")
-            root_cond = self._extract_root_condition(cond) if cond else ""
+            orig_cond = query_params.get("query.cond", "")
+            root_cond = self._extract_root_condition(orig_cond) if orig_cond else ""
             status_filter = query_params.get("filter.overallStatus", "RECRUITING")
 
-            # Fallback 1: search with only query.cond if query.term was present
-            if cond and "query.term" in query_params:
+            # Fallback 1: search with only unbroadened query.cond if query.term or stage was present
+            if orig_cond and ("query.term" in query_params or stage):
                 relaxed_params = {
-                    "query.cond": cond,
+                    "query.cond": orig_cond,
                     "filter.overallStatus": status_filter,
                     "pageSize": self._max_results,
                     "format": "json",

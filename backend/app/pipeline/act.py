@@ -35,10 +35,13 @@ def build_query_params(query: StructuredQuery) -> dict:
     """
     Maps StructuredQuery fields onto the API v2 search fields:
     `query.cond` for the primary condition/diagnosis,
+    `stage` for stage-aware query broadening,
     `query.term` prioritizing detected biomarkers/mutations (e.g., EGFR, exon 19 deletion, HER2, BRAF),
     disease stage, and prior therapies. Exclusions are checked in Verify stage.
     """
     params: dict = {"query.cond": query.condition}
+    if query.stage:
+        params["stage"] = query.stage
 
     term_parts: list[str] = []
     # Prioritize detected positive biomarkers/mutations first
@@ -131,7 +134,7 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
             if word in COMMON_CANCER_GENES:
                 patient_genes.add(word)
 
-    # 1. Biomarker scoring: Active inclusion criteria prioritized
+    # 1. Biomarker scoring: Active inclusion criteria and brief summary prioritized
     for bm in query.biomarkers:
         bm_lower = bm.lower().strip()
         if not bm_lower:
@@ -141,7 +144,7 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
         if bm_lower in title_lower:
             score += 18.0
         elif bm_lower in summary_lower:
-            score += 8.0
+            score += 15.0
 
         if bm_lower in inclusion_text:
             score += 12.0
@@ -153,10 +156,8 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
             if len(token) >= 3:
                 if token in title_lower:
                     score += 6.0
-                elif token in inclusion_text:
+                elif token in inclusion_text or token in summary_lower:
                     score += 5.0
-                elif token in summary_lower:
-                    score += 3.0
 
     # Primary biomarker active inclusion criterion bonus vs exclusion penalty
     for pg in patient_genes:
@@ -249,13 +250,83 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
         if not has_specific_patient_gene_focus:
             score -= 25.0
 
-    # 4. Histology / Condition matching
+    # 4. Stage Alignment: If patient is Stage IV / metastatic, penalize or exclude trials
+    # mentioning "neoadjuvant", "resectable", "stage I-III", or "M0" in title/summary
+    cond_lower = query.condition.lower()
+    stage_lower = (query.stage or "").lower().strip()
+    patient_is_metastatic = bool(
+        stage_lower
+        and any(
+            st in stage_lower
+            for st in ["iv", "4", "metastat", "advanced", "m1"]
+        )
+    ) or any(
+        st in cond_lower
+        for st in ["stage iv", "stage 4", "metastat", "advanced"]
+    )
+
+    if patient_is_metastatic:
+        early_pattern = (
+            r"\b(neoadjuvant|(?<!un)resectable|stage\s+(?:i{1,3}|[1-3])\b|"
+            r"stage\s+[i|1]\s*-\s*(?:iii|3)\b|\bm0\b|[t][0-4][n][0-3]m0\b|early[\s\-]+stage)\b"
+        )
+        has_early_title = bool(re.search(early_pattern, title_lower)) and not bool(
+            re.search(r"\b(unresectable|non-resectable)\b", title_lower)
+        )
+        has_early_summary = bool(re.search(early_pattern, summary_lower)) and not bool(
+            re.search(r"\b(unresectable|non-resectable)\b", summary_lower)
+        )
+        if has_early_title:
+            score -= 50.0
+        elif has_early_summary:
+            score -= 35.0
+
+    # 5. Cohort Specificity: If patient has NO brain metastases, exclude/deprioritize trials with "brain metastases" in title
+    patient_has_brain_mets = any(
+        "brain" in x.lower() or "cns" in x.lower() or "leptomeningeal" in x.lower()
+        for x in [query.condition, *query.biomarkers]
+    )
+    has_explicit_no_brain_mets = any(
+        re.search(
+            r"\b(no|without|negative|denies|free\s+of)\s+(?:active\s+)?(?:brain|cns|leptomeningeal)\b",
+            ex.lower(),
+        )
+        for ex in query.exclusions
+    ) or any(
+        ex.strip().lower()
+        in {"no brain metastases", "brain metastases", "cns metastases", "leptomeningeal disease"}
+        for ex in query.exclusions
+    )
+
+    if not patient_has_brain_mets or has_explicit_no_brain_mets:
+        if re.search(r"\b(brain\s+metasta\w+|cns\s+metasta\w+|leptomeningeal)\b", title_lower):
+            score -= 50.0
+        elif re.search(r"\b(brain\s+metasta\w+|cns\s+metasta\w+)\b", summary_lower):
+            score -= 25.0
+
+    # 6. Generic TNBC first-line regimens
+    is_tnbc = (
+        "triple negative" in cond_lower
+        or "tnbc" in cond_lower
+        or any("tnbc" in bm.lower() or "triple negative" in bm.lower() for bm in query.biomarkers)
+    )
+    if is_tnbc:
+        tnbc_regimens = [
+            "pembrolizumab", "keytruda", "sacituzumab", "trodelvy", "atezolizumab",
+            "carboplatin", "cisplatin", "paclitaxel", "nab-paclitaxel", "abraxane",
+            "gemcitabine", "olaparib", "talazoparib", "datopotamab", "chemotherapy",
+            "immunotherapy",
+        ]
+        regimen_hits = sum(1 for reg in tnbc_regimens if reg in title_lower or reg in summary_lower)
+        if regimen_hits > 0:
+            score += min(18.0, regimen_hits * 6.0)
+
+    # 7. Histology / Condition matching
     histology_terms = [
         "adenocarcinoma", "squamous", "non-small cell", "nsclc", "small cell", "sclc",
         "melanoma", "carcinoma", "sarcoma", "glioblastoma", "cholangiocarcinoma",
         "leukemia", "lymphoma", "myeloma", "colorectal", "breast", "prostate", "lung"
     ]
-    cond_lower = query.condition.lower()
     for ht in histology_terms:
         if ht in cond_lower:
             if ht in title_lower:
@@ -265,7 +336,7 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
             elif ht in eligibility_lower:
                 score += 2.0
 
-    # 5. Stage matching
+    # 8. Stage matching
     if query.stage:
         stage_clean = query.stage.lower().strip()
         stage_terms = [stage_clean]
@@ -282,7 +353,7 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
                 score += 2.0
                 break
 
-    # 6. Phase preference (Phase 2 or 3 preferred for active therapeutic evaluation)
+    # 9. Phase preference (Phase 2 or 3 preferred for active therapeutic evaluation)
     for p in trial.phase:
         p_lower = p.lower()
         if "phase 2" in p_lower or "phase 3" in p_lower:
