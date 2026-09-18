@@ -186,10 +186,25 @@ class ClinicalTrialsClient:
         # Ensure filter.overallStatus is always RECRUITING
         params["filter.overallStatus"] = "RECRUITING"
 
+        has_actionable_biomarker = bool(
+            query_params.get("has_actionable_biomarker")
+            or (
+                query_params.get("query.term")
+                and any(
+                    g in query_params["query.term"].lower()
+                    for g in [
+                        "egfr", "her2", "erbb2", "braf", "kras", "alk", "ros1",
+                        "met", "ret", "ntrk", "brca", "pik3ca", "pdl1", "pd-l1"
+                    ]
+                )
+            )
+        )
+
         # Broaden search query: combine condition with stage keywords when stage is available
+        # When an actionable biomarker is present, keep query.cond clean as primary condition
         cond = params.get("query.cond", "")
         stage = params.pop("stage", None) or query_params.get("query.stage")
-        if cond and stage and " AND " not in cond:
+        if not has_actionable_biomarker and cond and stage and " AND " not in cond:
             params["query.cond"] = self.build_stage_aware_query(cond, stage)
 
         # Sanitize and guard query.term against parser-breaking characters and length
@@ -203,11 +218,10 @@ class ClinicalTrialsClient:
         try:
             studies = await self._fetch_studies(params)
         except ClinicalTrialsAPIError as exc:
-            # Graceful Fallback: If ClinicalTrials.gov returns 400 and query.term was present,
-            # retry immediately using only query.cond to ensure retrieval doesn't crash the pipeline.
+            # Graceful Fallback: If ClinicalTrials.gov returns 400 and query.term was present
             if (exc.status_code == 400 or "status 400" in str(exc)) and "query.term" in params:
                 logger.warning(
-                    "ClinicalTrials.gov 400 for query.term; falling back to query.cond only"
+                    "ClinicalTrials.gov 400 for query.term; attempting recovery"
                 )
                 fallback_params = {k: v for k, v in params.items() if k != "query.term"}
                 studies = await self._fetch_studies(fallback_params)
@@ -218,31 +232,55 @@ class ClinicalTrialsClient:
         # If the initial request returns 0 candidate studies, do not immediately return empty results.
         # Automatically trigger a fallback search using only the primary condition/cancer entity
         # (or the first 2-3 words of the condition).
+        # When actionable mutations are present, NEVER query on condition alone.
         if not studies and ("query.cond" in query_params or "query.term" in query_params):
-            logger.info("Initial search returned 0 trials; auto-relaxing query to root condition.")
+            logger.info("Initial search returned 0 trials; auto-relaxing query.")
             orig_cond = query_params.get("query.cond", "")
             root_cond = self._extract_root_condition(orig_cond) if orig_cond else ""
             status_filter = query_params.get("filter.overallStatus", "RECRUITING")
 
-            # Fallback 1: search with only unbroadened query.cond if query.term or stage was present
-            if orig_cond and ("query.term" in query_params or stage):
-                relaxed_params = {
-                    "query.cond": orig_cond,
-                    "filter.overallStatus": status_filter,
-                    "pageSize": self._max_results,
-                    "format": "json",
-                }
-                studies = await self._fetch_studies(relaxed_params)
+            if has_actionable_biomarker and "query.term" in query_params:
+                # Do NOT query on condition alone when actionable mutations are detected!
+                # Retain the primary biomarker in query.term and relax condition if needed
+                if orig_cond and orig_cond != params.get("query.cond"):
+                    relaxed_params = {
+                        "query.cond": orig_cond,
+                        "query.term": query_params["query.term"],
+                        "filter.overallStatus": status_filter,
+                        "pageSize": self._max_results,
+                        "format": "json",
+                    }
+                    studies = await self._fetch_studies(relaxed_params)
 
-            # Fallback 2: search with root condition / first 2-3 words if still 0
-            if not studies and root_cond and root_cond != cond:
-                relaxed_params = {
-                    "query.cond": root_cond,
-                    "filter.overallStatus": status_filter,
-                    "pageSize": self._max_results,
-                    "format": "json",
-                }
-                studies = await self._fetch_studies(relaxed_params)
+                if not studies and root_cond:
+                    relaxed_params = {
+                        "query.cond": root_cond,
+                        "query.term": query_params["query.term"],
+                        "filter.overallStatus": status_filter,
+                        "pageSize": self._max_results,
+                        "format": "json",
+                    }
+                    studies = await self._fetch_studies(relaxed_params)
+            else:
+                # Fallback 1: search with only unbroadened query.cond if query.term or stage was present
+                if orig_cond and ("query.term" in query_params or stage):
+                    relaxed_params = {
+                        "query.cond": orig_cond,
+                        "filter.overallStatus": status_filter,
+                        "pageSize": self._max_results,
+                        "format": "json",
+                    }
+                    studies = await self._fetch_studies(relaxed_params)
+
+                # Fallback 2: search with root condition / first 2-3 words if still 0
+                if not studies and root_cond and root_cond != cond:
+                    relaxed_params = {
+                        "query.cond": root_cond,
+                        "filter.overallStatus": status_filter,
+                        "pageSize": self._max_results,
+                        "format": "json",
+                    }
+                    studies = await self._fetch_studies(relaxed_params)
 
             # Fallback 3: if condition was empty but term was present, search using root entity from term
             if not studies and not cond and "query.term" in query_params:

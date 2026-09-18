@@ -28,19 +28,31 @@ def test_build_query_params_condition_only():
     assert "query.term" not in params
 
 
-def test_build_query_params_includes_stage_and_prior_therapy_in_term():
-    query = StructuredQuery(
+def test_build_query_params_enforces_primary_biomarker_in_term():
+    # When biomarkers are present, pass the primary biomarker directly in query.term
+    query_with_bm = StructuredQuery(
+        condition="non-small cell lung cancer",
+        stage="Stage IV",
+        prior_therapy=["carboplatin/pemetrexed"],
+        biomarkers=["EGFR exon 19 deletion"],
+    )
+    params_bm = build_query_params(query_with_bm)
+
+    assert params_bm["query.cond"] == "non-small cell lung cancer"
+    assert params_bm["query.term"] == "EGFR"
+    assert params_bm.get("has_actionable_biomarker") is True
+
+    # When no biomarkers are present, pass stage and prior therapy in query.term
+    query_no_bm = StructuredQuery(
         condition="esophageal squamous cell carcinoma",
         stage="Stage III",
         prior_therapy=["neoadjuvant chemoradiation"],
-        biomarkers=["HER2-positive"],
     )
-    params = build_query_params(query)
+    params_no_bm = build_query_params(query_no_bm)
 
-    assert params["query.cond"] == "esophageal squamous cell carcinoma"
-    assert "Stage III" in params["query.term"]
-    assert "neoadjuvant chemoradiation" in params["query.term"]
-    assert "HER2-positive" in params["query.term"]
+    assert params_no_bm["query.cond"] == "esophageal squamous cell carcinoma"
+    assert "Stage III" in params_no_bm["query.term"]
+    assert "neoadjuvant chemoradiation" in params_no_bm["query.term"]
 
 
 def test_build_query_params_never_uses_exclusions_as_a_filter():
@@ -605,5 +617,131 @@ def test_biomarker_matching_in_brief_summary_and_tnbc_regimens():
 
     assert score_pbl > 35.0
     assert score_pbl > score_gen + 25.0
+
+
+def test_exclude_obvious_biomarker_negatives_for_egfr():
+    from app.pipeline.act import is_obvious_biomarker_negative
+
+    query_egfr = StructuredQuery(
+        condition="non-small cell lung cancer",
+        stage="Stage IV",
+        biomarkers=["EGFR exon 19 deletion"],
+    )
+
+    t_without_actionable = NormalizedTrial(
+        nct_id="NCT_NO_MUT",
+        title="Chemotherapy in Advanced Non-Small Cell Lung Cancer Without Actionable Mutations",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+    )
+
+    t_egfr_wt = NormalizedTrial(
+        nct_id="NCT_WT",
+        title="Immunotherapy in Patients With EGFR-wild-type Advanced NSCLC",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+    )
+
+    t_kras = NormalizedTrial(
+        nct_id="NCT_KRAS_MUT",
+        title="Study of Sotorasib in KRAS G12C Advanced NSCLC",
+        status="RECRUITING",
+        phase=["Phase 2"],
+        conditions=["Non-Small Cell Lung Cancer"],
+    )
+
+    t_targeted_egfr = NormalizedTrial(
+        nct_id="NCT_TARGETED_EGFR",
+        title="Osimertinib in Patients With Advanced EGFR Mutation-Positive NSCLC",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+    )
+
+    assert is_obvious_biomarker_negative(t_without_actionable, query_egfr) is True
+    assert is_obvious_biomarker_negative(t_egfr_wt, query_egfr) is True
+    assert is_obvious_biomarker_negative(t_kras, query_egfr) is True
+    assert is_obvious_biomarker_negative(t_targeted_egfr, query_egfr) is False
+
+    # Check that score_candidate_trial assigns massive penalty
+    score_without_act = score_candidate_trial(t_without_actionable, query_egfr)
+    score_egfr_target = score_candidate_trial(t_targeted_egfr, query_egfr)
+    assert score_without_act < -100.0
+    assert score_egfr_target > 20.0
+
+
+def test_deprioritize_phase_1_basket_when_targeted_phase_2_3_exists():
+    query_egfr = StructuredQuery(
+        condition="non-small cell lung cancer",
+        stage="Stage IV",
+        biomarkers=["EGFR"],
+    )
+
+    t_targeted_p3 = NormalizedTrial(
+        nct_id="NCT_TARGETED_P3",
+        title="Phase 3 Study of Osimertinib in Advanced EGFR-Mutated NSCLC",
+        status="RECRUITING",
+        phase=["Phase 3"],
+        conditions=["Non-Small Cell Lung Cancer"],
+    )
+
+    t_phase1_fih = NormalizedTrial(
+        nct_id="NCT_FIH",
+        title="A Phase 1 First-in-Human Dose Escalation and Safety Study in Advanced Solid Tumors",
+        status="RECRUITING",
+        phase=["Phase 1"],
+        conditions=["Advanced Solid Tumors"],
+    )
+
+    # When ranked together, targeted Phase 3 study must rank first and FIH Phase 1 study must be deprioritized
+    ranked = pre_rank_candidate_trials([t_phase1_fih, t_targeted_p3], query_egfr)
+    assert ranked[0].nct_id == "NCT_TARGETED_P3"
+    assert ranked[1].nct_id == "NCT_FIH"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_candidate_trials_filters_obvious_biomarker_negatives():
+    query_egfr = StructuredQuery(
+        condition="non-small cell lung cancer",
+        stage="Stage IV",
+        biomarkers=["EGFR exon 19 deletion"],
+    )
+
+    neg_study = {
+        "protocolSection": {
+            "identificationModule": {
+                "nctId": "NCT_NEG",
+                "briefTitle": "A Study in NSCLC Without Actionable Mutations",
+            },
+            "statusModule": {"overallStatus": "RECRUITING"},
+            "designModule": {"phases": ["PHASE3"]},
+            "conditionsModule": {"conditions": ["Non-Small Cell Lung Cancer"]},
+            "eligibilityModule": {"eligibilityCriteria": "Inclusion: NSCLC."},
+        }
+    }
+
+    pos_study = {
+        "protocolSection": {
+            "identificationModule": {
+                "nctId": "NCT_POS",
+                "briefTitle": "A Study of Osimertinib in EGFR-Mutated NSCLC",
+            },
+            "statusModule": {"overallStatus": "RECRUITING"},
+            "designModule": {"phases": ["PHASE3"]},
+            "conditionsModule": {"conditions": ["Non-Small Cell Lung Cancer"]},
+            "eligibilityModule": {"eligibilityCriteria": "Inclusion: Confirmed EGFR mutation."},
+        }
+    }
+
+    client = FakeClinicalTrialsClient(studies=[neg_study, pos_study])
+    retrieved = await retrieve_candidate_trials(query_egfr, client=client)
+
+    # Obvious biomarker negative should be filtered out
+    retrieved_nct_ids = [t.nct_id for t in retrieved]
+    assert "NCT_NEG" not in retrieved_nct_ids
+    assert "NCT_POS" in retrieved_nct_ids
+
 
 

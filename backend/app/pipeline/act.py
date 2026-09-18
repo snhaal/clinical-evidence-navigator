@@ -30,30 +30,75 @@ COMMON_CANCER_GENES = {
     "ret", "ntrk", "brca1", "brca2", "pik3ca", "pdl1", "pd-l1", "msi-h", "dmmr"
 }
 
+COMMON_CANCER_GENES_MAP = {
+    "egfr": "EGFR",
+    "her2": "HER2",
+    "erbb2": "HER2",
+    "braf": "BRAF",
+    "kras": "KRAS",
+    "alk": "ALK",
+    "ros1": "ROS1",
+    "met": "MET",
+    "ret": "RET",
+    "ntrk": "NTRK",
+    "brca1": "BRCA1",
+    "brca2": "BRCA2",
+    "pik3ca": "PIK3CA",
+    "pdl1": "PD-L1",
+    "pd-l1": "PD-L1",
+    "msi-h": "MSI-H",
+    "dmmr": "dMMR",
+}
+
+
+def extract_primary_biomarker(biomarkers: list[str]) -> str | None:
+    """
+    Extracts the primary actionable biomarker symbol (e.g. 'EGFR', 'HER2', 'PD-L1')
+    from the patient's detected biomarkers.
+    """
+    if not biomarkers:
+        return None
+    for bm in biomarkers:
+        bm_clean = re.sub(r"[^\w\-]", " ", bm.lower())
+        for token in bm_clean.split():
+            if token in COMMON_CANCER_GENES_MAP:
+                return COMMON_CANCER_GENES_MAP[token]
+    first_bm = biomarkers[0].strip()
+    clean_first = re.sub(r"[()%:;,/+=<>]", " ", first_bm).strip()
+    words = clean_first.split()
+    if words:
+        return " ".join(words[:2])
+    return None
+
 
 def build_query_params(query: StructuredQuery) -> dict:
     """
     Maps StructuredQuery fields onto the API v2 search fields:
-    `query.cond` for the primary condition/diagnosis,
-    `stage` for stage-aware query broadening,
-    `query.term` prioritizing detected biomarkers/mutations (e.g., EGFR, exon 19 deletion, HER2, BRAF),
-    disease stage, and prior therapies. Exclusions are checked in Verify stage.
+    - When patient biomarkers are present (e.g., 'EGFR', 'Exon 19 deletion', 'HER2', 'PD-L1'),
+      passes the primary biomarker directly into ClinicalTrials.gov API parameters:
+      * `query.cond`: Primary condition (e.g., 'Non-small cell lung cancer').
+      * `query.term`: Primary actionable biomarker (e.g., 'EGFR').
+      Do NOT query only on condition alone when actionable mutations are detected.
+    - When no biomarkers are present, uses condition and stage/prior therapy terms.
     """
     params: dict = {"query.cond": query.condition}
-    if query.stage:
-        params["stage"] = query.stage
 
-    term_parts: list[str] = []
-    # Prioritize detected positive biomarkers/mutations first
-    if query.biomarkers:
-        term_parts.extend(query.biomarkers)
-    if query.stage:
-        term_parts.append(query.stage)
-    if query.prior_therapy:
-        term_parts.extend(query.prior_therapy)
+    primary_bm = extract_primary_biomarker(query.biomarkers)
+    if primary_bm:
+        params["query.term"] = primary_bm
+        params["has_actionable_biomarker"] = True
+    else:
+        if query.stage:
+            params["stage"] = query.stage
 
-    if term_parts:
-        params["query.term"] = " ".join(term_parts)
+        term_parts: list[str] = []
+        if query.stage:
+            term_parts.append(query.stage)
+        if query.prior_therapy:
+            term_parts.extend(query.prior_therapy)
+
+        if term_parts:
+            params["query.term"] = " ".join(term_parts)
 
     if query.status_filter:
         params["filter.overallStatus"] = query.status_filter
@@ -104,7 +149,11 @@ def normalize_study(raw_study: dict) -> NormalizedTrial | None:
     )
 
 
-def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> float:
+def score_candidate_trial(
+    trial: NormalizedTrial,
+    query: StructuredQuery,
+    has_targeted_phase_2_3: bool = False,
+) -> float:
     """
     Deterministic pre-ranking score for candidate trials before LLM verification:
     - Heavily rewards matching biomarkers/mutations, prioritizing trials where the
@@ -249,6 +298,9 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
         has_specific_patient_gene_focus = any(pg in title_lower for pg in patient_genes)
         if not has_specific_patient_gene_focus:
             score -= 25.0
+        # Deprioritize Phase 1 first-in-human / dose-escalation basket studies if targeted Phase 2/3 trials exist
+        if has_targeted_phase_2_3:
+            score -= 40.0
 
     # 4. Stage Alignment: If patient is Stage IV / metastatic, penalize or exclude trials
     # mentioning "neoadjuvant", "resectable", "stage I-III", or "M0" in title/summary
@@ -360,7 +412,36 @@ def score_candidate_trial(trial: NormalizedTrial, query: StructuredQuery) -> flo
             score += 3.0
             break
 
+    # 10. Obvious biomarker negative penalty
+    if is_obvious_biomarker_negative(trial, query):
+        score -= 200.0
+
     return score
+
+
+def is_obvious_biomarker_negative(trial: NormalizedTrial, query: StructuredQuery) -> bool:
+    """
+    Returns True if the trial explicitly excludes or contradicts the patient's
+    actionable driver mutation in its title (e.g., 'Without Actionable Mutations',
+    'EGFR-wild-type', or 'KRAS' for an EGFR patient).
+    """
+    title_lower = trial.title.lower()
+    patient_genes = set()
+    for bm in query.biomarkers:
+        bm_clean = re.sub(r"[^\w\-]", " ", bm.lower())
+        for word in bm_clean.split():
+            if word in COMMON_CANCER_GENES:
+                patient_genes.add(word)
+
+    patient_has_egfr = "egfr" in patient_genes or any("egfr" in bm.lower() for bm in query.biomarkers)
+    if patient_has_egfr:
+        if re.search(r"\bwithout\s+actionable\s+(?:mutations?|alterations?|drivers?|oncogenes?)\b", title_lower):
+            return True
+        if re.search(r"\begfr[\s\-]+wild[\s\-]*type\b|\begfr[\s\-]+wt\b", title_lower):
+            return True
+        if re.search(r"\bkras\b", title_lower):
+            return True
+    return False
 
 
 def pre_rank_candidate_trials(
@@ -369,11 +450,28 @@ def pre_rank_candidate_trials(
     """
     Ranks candidates by relevance score descending so the most biomarker- and
     histology-aligned studies are verified first.
+    Deprioritizes Phase 1 first-in-human / dose-escalation basket studies
+    if targeted Phase 2/3 trials exist for the condition.
     """
     if not trials or not query:
         return trials
 
-    scored_trials = [(trial, score_candidate_trial(trial, query)) for trial in trials]
+    # Check if targeted Phase 2/3 trials exist in the candidate pool
+    has_targeted_phase_2_3 = any(
+        any("phase 2" in p.lower() or "phase 3" in p.lower() for p in t.phase)
+        and not bool(
+            re.search(
+                r"\b(basket|dose[\s\-]+escalation|dose[\s\-]+finding|first[\s\-]+in[\s\-]+human|\bfih\b)\b",
+                t.title.lower(),
+            )
+        )
+        for t in trials
+    )
+
+    scored_trials = [
+        (trial, score_candidate_trial(trial, query, has_targeted_phase_2_3=has_targeted_phase_2_3))
+        for trial in trials
+    ]
     scored_trials.sort(key=lambda item: item[1], reverse=True)
     return [trial for trial, _score in scored_trials]
 
@@ -384,8 +482,8 @@ async def retrieve_candidate_trials(
 ) -> list[NormalizedTrial]:
     """
     Main entry point for the Act stage. Retrieves recruiting studies from
-    ClinicalTrials.gov, normalizes them, and deterministically pre-ranks them
-    based on biomarker, condition, and stage alignment.
+    ClinicalTrials.gov, normalizes them, filters obvious biomarker negatives,
+    and deterministically pre-ranks them based on biomarker, condition, and stage alignment.
     """
     client = client or ClinicalTrialsClient()
     params = build_query_params(query)
@@ -399,6 +497,10 @@ async def retrieve_candidate_trials(
     trials = [normalize_study(s) for s in raw_studies]
     valid_trials = [t for t in trials if t is not None]
 
+    # Exclude obvious biomarker negatives from candidate pool if other candidates exist
+    filtered_trials = [t for t in valid_trials if not is_obvious_biomarker_negative(t, query)]
+    trials_to_rank = filtered_trials if filtered_trials else valid_trials
+
     # Deterministic biomarker-aware pre-ranking
-    ranked_trials = pre_rank_candidate_trials(valid_trials, query)
+    ranked_trials = pre_rank_candidate_trials(trials_to_rank, query)
     return ranked_trials
